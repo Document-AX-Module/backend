@@ -21,5 +21,6 @@ def get_llm_provider(settings: Settings) -> LLMProvider:
             settings.openai_api_key,
             model=settings.openai_model,
             base_url=settings.openai_base_url,
+            categories=settings.proofread_categories,
         )
     return MockLLMProvider()

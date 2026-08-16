@@ -174,8 +174,9 @@ provider 추상화(`app/services/auth_providers.py`): `mock`(dev 전용, 크리�
 | POST | `/api/v1/documents/compare` | `{base_version_id, target_version_id}` → diff + GPT 설명 | ⏳ (MVP4) |
 
 - **proofread 흐름(202 + 폴링)**: `POST /proofread` 는 검증 후 `RUNNING` 레코드를 만들고 **즉시 `202`** 반환 → BackgroundTasks 가 배치 교정 수행 → 프론트는 `GET .../analyses/{analysis_id}` 로 `status`(RUNNING→COMPLETED/FAILED)를 폴링. 파싱 전(`UPLOADED/PARSING`)이면 `409`, 문서 없음 `404`.
-- **배치 호출**: 섹션을 글자수/개수 상한(`proofread_batch_max_chars`·`_max_sections`)으로 묶어 **한 프롬프트에 여러 섹션**을 보낸다(`[번호]` 마커 → 결과 index 로 되매핑). 섹션당 1회 순차 호출 대비 호출 수·시간·비용 대폭 절감(11섹션 기준 순차 17s → 배치 1회 ~7.5s). 각 finding 은 `original→suggestion`·`reason`·`category`(spelling/spacing/grammar/expression) + `section_id`·`page_start/end`.
+- **배치 호출**: 섹션을 글자수/개수 상한(`proofread_batch_max_chars`·`_max_sections`)으로 묶어 **한 프롬프트에 여러 섹션**을 보낸다(`[번호]` 마커 → 결과 index 로 되매핑). 섹션당 1회 순차 호출 대비 호출 수·시간·비용 대폭 절감(11섹션 기준 순차 17s → 배치 1회 ~7.5s). 각 finding 은 `original→suggestion`·`reason`·`category` + `section_id`·`page_start/end`.
 - **LLM provider 추상화**(`app/services/llm/`): `MockLLMProvider`(규칙 기반, 키 불필요) + `OpenAILLMProvider`(httpx Chat Completions, `proofread`/`proofread_batch`). `LLM_PROVIDER=auto`면 `OPENAI_API_KEY` 유무로 자동 선택. 프롬프트는 `app/services/llm/prompts.py`에 분리. 최신 모델(gpt-5.x)은 `temperature` 커스텀 불가라 payload 에서 생략.
+- **교정 범위**(`PROOFREAD_CATEGORIES`, 기본 `["spelling","spacing"]`): 문서가 길어질수록 GPT 가 "더 자연스럽게" 류의 표현·문맥 지적을 쏟아내 정작 오탈자가 묻히므로 기본을 오탈자·띄어쓰기로 좁혀 뒀다(같은 문서 실측 12건 → 9건, 표현·문법 4건 전부 제거). 프롬프트가 대상 유형·금지 항목·**category enum 을 함께 좁히고**(enum 을 열어 두면 모델이 제외 대상을 남은 카테고리에 욱여넣는다), 그래도 새어 나온 지적은 provider 가 응답에서 걸러 로그에 남긴다. 단 처음 보는 라벨은 버리지 않고 기본 카테고리로 보정한다 — 라벨 오타 때문에 멀쩡한 오탈자 지적을 잃지 않기 위함. 표현 교정까지 받으려면 `.env` 에 4종을 모두 적고 **재시작**.
 - **결과 적재**: `ai_analysis_results`(document/version FK, `analysis_type`, `status`=RUNNING/COMPLETED/FAILED, `provider`, `result` JSONB, `error`) — proofread 외 classify·validate·related 결과도 이 테이블을 공용으로 쓴다.
 
 > 참고: 초기의 `POST /api/v1/spell-check`(입력을 그대로 돌려주던 스텁)는 **삭제됐다**(2026-08-16). 소비자가 없었고 실제 교정은 `proofread` 가 담당한다.

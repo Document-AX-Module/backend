@@ -55,6 +55,12 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4o-mini"
     # "auto"(키 있으면 openai, 없으면 mock) · "openai" · "mock"
     llm_provider: str = "auto"
+    # 교정에서 지적할 오류 유형. spelling(맞춤법) · spacing(띄어쓰기) ·
+    # grammar(문법) · expression(표현·문체) 중 고른다.
+    # 기본값이 좁은 이유: 문서가 길어질수록 GPT 가 "더 자연스럽게" 류의 표현·문맥
+    # 지적을 쏟아내 정작 오탈자가 묻힌다. 프롬프트의 category enum 도 함께 좁혀지고,
+    # 그래도 새어 나온 지적은 provider 가 응답에서 걸러낸다.
+    proofread_categories: list[str] = ["spelling", "spacing"]
     # proofread 시 한 섹션에서 넘기는 최대 글자 수(과금/토큰 보호)
     proofread_max_chars_per_section: int = 4000
     # 배치 호출: 한 번의 GPT 호출에 묶는 상한(글자수/섹션수). 넘으면 다음 배치로.

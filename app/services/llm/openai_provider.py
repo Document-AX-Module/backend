@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import json
+import logging
+from collections.abc import Iterable, Sequence
 
 import httpx
 
 from app.services.llm.base import LLMConfigError, LLMError, ProofreadFinding
-from app.services.llm.prompts import PROOFREAD_BATCH_SYSTEM, PROOFREAD_SYSTEM
+from app.services.llm.prompts import (
+    KNOWN_CATEGORIES,
+    proofread_batch_system,
+    proofread_system,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class OpenAILLMProvider:
@@ -17,6 +25,7 @@ class OpenAILLMProvider:
         *,
         model: str,
         base_url: str,
+        categories: Iterable[str] = ("spelling", "spacing"),
         timeout: float = 120.0,
     ) -> None:
         self._api_key = api_key
@@ -25,8 +34,15 @@ class OpenAILLMProvider:
         self._timeout = timeout
         self.name = f"openai:{model}"
 
+        self._categories = [c for c in KNOWN_CATEGORIES if c in set(categories)] or [
+            "spelling"
+        ]
+        self._allowed = set(self._categories)
+        self._system = proofread_system(self._categories)
+        self._batch_system = proofread_batch_system(self._categories)
+
     def proofread(self, text: str) -> list[ProofreadFinding]:
-        content = self._chat(PROOFREAD_SYSTEM, text)
+        content = self._chat(self._system, text)
         data = self._load_json(content)
         raw = data.get("findings", []) if isinstance(data, dict) else []
         return self._to_findings(raw)
@@ -36,7 +52,7 @@ class OpenAILLMProvider:
             return []
         # [번호] 마커로 여러 조각을 한 요청에 담는다.
         user = "\n\n".join(f"[{i}] {t}" for i, t in enumerate(texts))
-        content = self._chat(PROOFREAD_BATCH_SYSTEM, user)
+        content = self._chat(self._batch_system, user)
         data = self._load_json(content)
 
         out: list[list[ProofreadFinding]] = [[] for _ in texts]
@@ -89,23 +105,44 @@ class OpenAILLMProvider:
             raise LLMError(f"OpenAI 응답 JSON 파싱 실패: {exc}") from exc
         return data if isinstance(data, dict) else {}
 
-    @staticmethod
-    def _to_findings(raw) -> list[ProofreadFinding]:
+    def _to_findings(self, raw) -> list[ProofreadFinding]:
         findings: list[ProofreadFinding] = []
         if not isinstance(raw, list):
             return findings
+        dropped = 0
         for item in raw:
             if not isinstance(item, dict):
                 continue
             original = str(item.get("original", "")).strip()
             if not original:
                 continue
+            category = self._normalize_category(item.get("category"))
+            if category is None:
+                dropped += 1
+                continue
             findings.append(
                 ProofreadFinding(
                     original=original,
                     suggestion=str(item.get("suggestion", "")).strip(),
                     reason=str(item.get("reason", "")).strip(),
-                    category=str(item.get("category", "spelling")).strip() or "spelling",
+                    category=category,
                 )
             )
+        if dropped:
+            # 프롬프트로 막아도 긴 문서에서는 종종 새어 나온다. 조용히 버리지 않고 남긴다.
+            logger.info("검사 범위 밖 지적 %d건 제외 (허용: %s)", dropped, self._categories)
         return findings
+
+    def _normalize_category(self, raw) -> str | None:
+        """응답의 category 를 허용 목록에 맞춘다. 제외 대상이면 None.
+
+        - 명시적으로 끈 유형(expression/grammar 등)이면 버린다.
+        - 라벨이 오타거나 처음 보는 값이면 버리지 않고 기본 카테고리로 보정한다.
+          모델이 라벨을 헛짚었다고 멀쩡한 오탈자 지적까지 잃을 이유는 없다.
+        """
+        category = str(raw or "").strip().lower()
+        if category in self._allowed:
+            return category
+        if category in KNOWN_CATEGORIES:
+            return None
+        return self._categories[0]
