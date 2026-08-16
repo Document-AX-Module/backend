@@ -41,7 +41,6 @@ def split_to_size(text: str, max_chars: int, overlap: int) -> list[str]:
     chunks: list[str] = []
     current = ""
     for sentence in _split_sentences(text):
-        # 한 문장이 max 보다 길면 하드 분할
         if len(sentence) > max_chars:
             if current:
                 chunks.append(current)

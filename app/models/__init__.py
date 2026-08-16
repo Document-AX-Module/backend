@@ -4,6 +4,7 @@ Alembic autogenerate 가 모든 테이블을 인식하도록 여기서 전부 im
 새 모델을 추가하면 반드시 이 목록에도 등록한다.
 """
 
+from app.models.activity_log import ActivityLog
 from app.models.ai_analysis_result import AiAnalysisResult
 from app.models.chunk_embedding import ChunkEmbedding
 from app.models.document import Document
@@ -26,4 +27,5 @@ __all__ = [
     "EmbeddingModel",
     "ChunkEmbedding",
     "AiAnalysisResult",
+    "ActivityLog",
 ]

@@ -11,10 +11,6 @@ import shutil
 from pathlib import Path
 from typing import Protocol
 
-from fastapi import Depends
-
-from app.core.config import Settings, get_settings
-
 
 class StorageProvider(Protocol):
     def save(self, relative_dir: str, filename: str, data: bytes) -> str: ...
@@ -43,7 +39,3 @@ class LocalStorageProvider:
         target = self.root / relative_dir
         if target.exists():
             shutil.rmtree(target, ignore_errors=True)
-
-
-def get_storage(settings: Settings = Depends(get_settings)) -> StorageProvider:
-    return LocalStorageProvider(settings.storage_root)

@@ -29,13 +29,6 @@ class TesseractProvider:
     def __init__(self, lang: str = "kor+eng") -> None:
         self.lang = lang
 
-    def available(self) -> bool:
-        try:
-            pytesseract.get_tesseract_version()
-            return True
-        except Exception:
-            return False
-
     def recognize(self, image: Image.Image) -> list[OCRWord]:
         data = pytesseract.image_to_data(
             image, lang=self.lang, output_type=pytesseract.Output.DICT

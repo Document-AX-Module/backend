@@ -18,7 +18,12 @@ from app.repositories.document_repository import (
 from app.repositories.folder_repository import FolderRepository
 from app.repositories.project_repository import ProjectRepository
 from app.repositories.user_repository import UserRepository
-from app.schemas.document import AuthorInfo, DocumentRead, DocumentVersionRead
+from app.schemas.document import (
+    AuthorInfo,
+    DocumentRead,
+    DocumentVersionRead,
+    RecentDocumentRead,
+)
 from app.services.project_service import ProjectNotFoundError
 from app.services.storage import LocalStorageProvider, StorageProvider
 
@@ -90,6 +95,24 @@ class DocumentService:
         return self.documents.list_by_project(
             project_id, folder_id=folder_id, status=status, document_type=document_type
         )
+
+    def list_recent_documents(
+        self, *, limit: int, project_id: int | None = None
+    ) -> list[RecentDocumentRead]:
+        """대시보드 "최근 문서" 카드용 — 프로젝트를 가로질러 최근 등록순으로."""
+        if project_id is not None:
+            self._ensure_project(project_id)
+        return [
+            RecentDocumentRead(
+                id=row.id,
+                name=row.name,
+                project_id=row.project_id,
+                project_name=row.project_name,
+                processing_status=row.processing_status,
+                created_at=row.created_at,
+            )
+            for row in self.documents.list_recent(limit=limit, project_id=project_id)
+        ]
 
     def get_document(self, document_id: int) -> Document:
         doc = self.documents.get(document_id)
@@ -194,7 +217,6 @@ class DocumentService:
                 name=name or filename,
                 description=description,
                 document_type=ext,
-                status="DRAFT",
                 created_by=created_by,
             )
         )

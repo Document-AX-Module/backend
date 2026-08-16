@@ -1,6 +1,27 @@
 from datetime import datetime
+from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+class ProcessingStatus(str, Enum):
+    """`document_versions.processing_status` 값 — 업로드 후 처리 파이프라인 상태.
+
+    `UPLOADED → PARSING → PARSED → CHUNKING → CHUNKED → EMBEDDING → READY`
+    순으로 전이하며, 어느 단계에서든 실패하면 `FAILED` 로 간다.
+    임베딩(MVP2)이 아직 없어 현재는 `CHUNKED` 가 사실상 종착 상태다.
+
+    문서 생명주기를 뜻하는 `documents.status` 와는 다른 값이니 혼동하지 말 것.
+    """
+
+    UPLOADED = "UPLOADED"
+    PARSING = "PARSING"
+    PARSED = "PARSED"
+    CHUNKING = "CHUNKING"
+    CHUNKED = "CHUNKED"
+    EMBEDDING = "EMBEDDING"
+    READY = "READY"
+    FAILED = "FAILED"
 
 
 class DocumentVersionRead(BaseModel):
@@ -33,7 +54,7 @@ class DocumentRead(BaseModel):
     name: str
     description: str | None
     document_type: str | None
-    status: str
+    # status 는 없다 — 처리 상태는 current_version.processing_status 를 볼 것.
     current_version_id: int | None
     created_by: str | None
     # 작성자 이름/이메일(created_by 사용자 id 를 해석) + 현재 버전 정보
@@ -68,6 +89,22 @@ class SectionRead(BaseModel):
     order_no: int
     content: str | None
     meta: dict | None
+
+
+class RecentDocumentRead(BaseModel):
+    """대시보드 "최근 문서" 카드용 납작한 뷰.
+
+    프로젝트 경로와 상태 배지를 추가 요청 없이 바로 그릴 수 있도록,
+    `DocumentRead` 와 달리 프로젝트 이름과 현재 버전의 처리 상태를 펼쳐서 담는다.
+    """
+
+    id: int
+    name: str
+    project_id: int
+    project_name: str
+    # 현재 버전의 processing_status. 버전이 아직 없으면 UPLOADED 로 본다.
+    processing_status: str
+    created_at: datetime
 
 
 class ChunkRead(BaseModel):

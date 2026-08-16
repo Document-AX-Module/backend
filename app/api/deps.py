@@ -30,16 +30,3 @@ def get_current_user(
             detail="사용자를 찾을 수 없거나 비활성 상태",
         )
     return user
-
-
-def require_role(*roles: str):
-    """특정 role 만 접근 허용하는 의존성 팩토리 (예: 관리자 전용 Embedding Lab)."""
-
-    def checker(current_user: User = Depends(get_current_user)) -> User:
-        if current_user.role not in roles:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN, detail="권한 없음"
-            )
-        return current_user
-
-    return checker

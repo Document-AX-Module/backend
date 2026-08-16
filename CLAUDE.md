@@ -8,13 +8,13 @@ This repository is the **backend** for the **AX Document Platform** — a projec
 
 **What actually exists today** (don't overstate):
 - **DB / migrations**: the full Document Core schema (8 tables: projects, folders, documents, document_versions, document_sections, document_chunks, embedding_models, chunk_embeddings) + a `users` table, all created via **Alembic** migrations. `chunk_embeddings.embedding` is `pgvector.Vector(1024)`.
-- **Auth**: Google OAuth + backend-issued JWT (access via `Authorization: Bearer`, refresh in httpOnly cookie), plus a `mock` provider for dev login without credentials. `get_current_user` / `require_role` dependencies in `app/api/deps.py`.
+- **Auth**: Google OAuth + backend-issued JWT (access via `Authorization: Bearer`, refresh in httpOnly cookie), plus a `mock` provider for dev login without credentials. `get_current_user` dependency in `app/api/deps.py` (role-based gating isn't wired yet — add it when the first admin-only route lands).
 - **Projects & Folders**: full CRUD, **auth-protected**, layered as `router → service → repository → model`. `created_by` is filled server-side from the logged-in user. Folder moves are cycle-checked.
 - **Document Upload (Phase 5)**: multipart upload → validates extension/size → stores file via `StorageProvider` (local, under `storage/`) → creates `document` + `document_version` (v1, sha256) → `202`. Plus list/detail/versions/download/status/delete, all auth-protected. Detail & list are enriched with `author` (created_by id → name/email) and `current_version`.
 - **Parse pipeline (Phase 6)**: a `BackgroundTasks` job (`run_parse_task`) parses the uploaded file into `document_sections` (hierarchy via parent_section_id + a `level` column — heading depth 1-9, body/table = 100; page/bbox in `meta` JSONB). **Section rule** (normalized in `parsing_service._persist_sections`, format-agnostic): `heading` sections carry `title` only (`content` emptied to avoid duplicate display); body/table carry `content` only. Format adapters in `app/services/parsing/`: TXT/MD, DOCX (python-docx, heading styles + tables), PDF (PyMuPDF native text + bbox + font-size heading heuristic, **+ Tesseract OCR fallback for scanned pages**, kor+eng), HWPX (OWPML XML). `GET /versions/{id}/sections` exposes `level` so the frontend can render a collapsible tree.
 - **Chunking (Phase 7)**: same job continues into `document_chunks` — structure-aware (skips headings, carries a `heading_path` breadcrumb, sentence-split with overlap only when a section exceeds `chunk_max_chars`). `GET /versions/{id}/chunks`. Status flow: `UPLOADED→PARSING→PARSED→CHUNKING→CHUNKED` (terminal for now; `EMBEDDING→READY` comes with Phase 9).
 - **Proofread (Phase 8, MVP1's last step) — now wired to real GPT, async + batch**: `POST /documents/{id}/proofread` validates + creates a `RUNNING` row and returns **`202` immediately**; a `BackgroundTasks` job (`run_proofread_task`) then runs the current version's parsed sections through an `LLMProvider` and updates the row to `COMPLETED`/`FAILED`. Frontend polls `GET /documents/{id}/analyses/{analysis_id}` (status RUNNING→COMPLETED). **Batching**: sections are grouped (`proofread_batch_max_chars`/`_max_sections`) and sent in one prompt via `[n]` markers → results remapped by index (11 sections: sequential ~17s → one batch ~7.5s, 11 calls → 1). Each finding: `original→suggestion`, `reason`, `category`, + `section_id`/page. Results persist to a shared `ai_analysis_results` table (analysis_type=`proofread`; classify/validate/related reuse it). Provider abstraction in `app/services/llm/`: `MockLLMProvider` (rule-based, no key) + `OpenAILLMProvider` (httpx Chat Completions, `proofread`/`proofread_batch`); prompts live in `app/services/llm/prompts.py`. `LLM_PROVIDER=auto` auto-selects by `OPENAI_API_KEY` presence — **currently a real key is set, so proofread hits OpenAI GPT** (model via `OPENAI_MODEL`, e.g. `gpt-5.6-luna`; gpt-5.x models reject custom `temperature`, so it's omitted). `.env` change needs a **server restart** (env is read at startup; `--reload` only reloads code). See [[proofread-gpt-setup]].
-- **health**: `/api/v1/health` pings the DB. `spell_check` module `service.py` is still a **stub that echoes input** (single-text endpoint; folds into proofread eventually).
+- **health**: `/api/v1/health` pings the DB.
 - **Not yet**: embedding / RAG (Phase 9); document `PATCH` + new-version (v2+) upload + SSE; project list aggregate fields; `members` (membership table); real created_by FK; parsers for hwp/xlsx/pptx (those upload but `FAILED` on parse). Frontend wiring for the async proofread poll + section tree render is still pending.
 
 The full design lives in [docs/DESIGN.md](docs/DESIGN.md), the API contract + build status in [docs/api-spec.md](docs/api-spec.md); the platform is being built in phases (see "Development phases" below).
@@ -82,14 +82,14 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload                      # dev server at http://localhost:8000
 ```
 
-Docker Compose lives in the **parent directory** (`sidepjt/docker-compose.yml`), not in `backend/`. It orchestrates the whole platform (db + backend today; frontend/embedding/storage as commented placeholders). Run it from the parent:
+Docker Compose lives in the **parent directory** (`AX-Module/docker-compose.yml`, the folder the docs call `sidepjt/`), not in `backend/`. It orchestrates the whole platform (db + backend today; frontend/embedding/storage as commented placeholders). Run it from the parent:
 
 ```bash
-cd ..            # into sidepjt/
+cd ..            # into the AX-Module root
 docker compose up --build
 ```
 
-The root compose builds the backend via `build: ./backend` (backend keeps its own `Dockerfile`) and reads `./backend/.env` (app secrets: `JWT_SECRET`, `GOOGLE_CLIENT_ID/SECRET`, `AUTH_PROVIDERS`, ...). `DATABASE_URL` is set in compose `environment:` (overrides `.env`) so the container always talks to the `db` service. `db` uses `pgvector/pgvector:pg16`. Copy `backend/.env.example` to `backend/.env` before running either the bare `uvicorn` command or `docker compose up` (Compose errors if the `env_file` is missing). **`backend/.env` holds real secrets and is gitignored — never commit it; keep `.env.example` in sync with placeholders.**
+The root compose builds the backend via `build: ./backend` (backend keeps its own `Dockerfile`) and reads `./backend/.env` (app secrets: `JWT_SECRET`, `GOOGLE_CLIENT_ID/SECRET`, `AUTH_PROVIDERS`, ...). `DATABASE_URL` is set in compose `environment:` (overrides `.env`) so the container always talks to the `db` service. `db` uses `pgvector/pgvector:pg16`. **Two env files are needed:** the root `.env` (compose-level: `POSTGRES_*`, `*_PORT`, `CORS_ALLOW_ORIGINS` — copy from the root `.env.example`) and `backend/.env` (app secrets — copy from `backend/.env.example`). Both before running either the bare `uvicorn` command or `docker compose up` (Compose errors if the `env_file` is missing). **`backend/.env` holds real secrets and is gitignored — never commit it; keep `.env.example` in sync with placeholders.** Note the root directory is *not* a git repo (only `backend/` and `frontend/` are), so the root `.env`/`.env.example` aren't version-controlled — carry them by hand when moving machines.
 
 **Database migrations (Alembic).** Schema is managed by migrations in `alembic/`, never hand-DDL in DBeaver. Run from `backend/` (host `.venv`, hits `localhost:5432`):
 
@@ -137,19 +137,17 @@ app/
 │   ├── storage.py           # StorageProvider (LocalStorageProvider today; MinIO/S3 later)
 │   └── auth_service.py  auth_providers.py   # MockProvider / GoogleProvider behind one interface
 ├── api/
-│   ├── deps.py             # get_current_user (HTTPBearer), require_role(...)
+│   ├── deps.py             # get_current_user (HTTPBearer)
 │   └── v1/
 │       ├── router.py       # aggregates module routers — register new ones here
 │       ├── health.py  auth.py  projects.py  folders.py  documents.py  proofread.py
-└── modules/
-    └── spell_check/         # legacy module shape (router/schemas/service) — proofread stub, to be folded in
 alembic/                     # migrations (run: alembic upgrade head)
 docs/                        # DESIGN.md (design), api-spec.md (contract + build status)
 ```
 
 When adding a feature, follow the layered flow: `schemas/` (I/O) → `repositories/` (DB) → `services/` (logic + `get_*_service()` DI) → `api/v1/<feature>.py` (routes) registered in `api/v1/router.py`. Protect routes with `Depends(get_current_user)`. **Always add new models to `app/models/__init__.py`** or Alembic autogenerate won't see them. Shared plumbing every AI module reuses (Document Core, the `EmbeddingProvider` interface, GPT client) lives in shared `services/`, not inside one feature module.
 
-The frontend's TypeScript types in `../frontend/src/lib/spellCheck.ts` mirror `app/modules/spell_check/schemas.py` by hand (no shared type generation across the two repos) — update both sides when changing the API contract.
+The frontend mirrors these schemas by hand in `../frontend/src/lib/types.ts` (no shared type generation across the two repos) — update both sides when changing the API contract. Swagger (`/docs`) is the live contract: every endpoint carries a summary, description, and per-parameter docs.
 
 ## Development phases
 
