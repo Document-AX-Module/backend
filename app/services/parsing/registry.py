@@ -7,7 +7,7 @@ from app.services.parsing.ocr import TesseractProvider
 from app.services.parsing.pdf_parser import PdfParser
 from app.services.parsing.text_parser import TextParser
 
-# OCR provider 는 한 번만 만들어 PDF 파서에 주입한다.
+# OCR provider 는 한 번만 만들어 PDF 파서에 주입
 _ocr = TesseractProvider(lang="kor+eng")
 
 _PARSERS: list[DocumentParser] = [

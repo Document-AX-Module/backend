@@ -27,13 +27,13 @@ from app.schemas.document import (
 from app.services.project_service import ProjectNotFoundError
 from app.services.storage import LocalStorageProvider, StorageProvider
 
-# processing_status → 진행률(%) 매핑 (Frontend 폴링용)
+# processing_status -> 진행률매핑
 _STATUS_PROGRESS = {
     "UPLOADED": 5,
     "PARSING": 25,
     "PARSED": 45,
     "CHUNKING": 65,
-    "CHUNKED": 75,  # 임베딩(Phase 9) 전까지의 현재 종착 상태
+    "CHUNKED": 75,
     "EMBEDDING": 85,
     "READY": 100,
     "FAILED": 0,
@@ -99,7 +99,7 @@ class DocumentService:
     def list_recent_documents(
         self, *, limit: int, project_id: int | None = None
     ) -> list[RecentDocumentRead]:
-        """대시보드 "최근 문서" 카드용 — 프로젝트를 가로질러 최근 등록순으로."""
+        """대시보드 최근 문서 카드용 — 프로젝트를 가로질러 최근 등록순"""
         if project_id is not None:
             self._ensure_project(project_id)
         return [

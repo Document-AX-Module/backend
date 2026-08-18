@@ -15,10 +15,7 @@ if TYPE_CHECKING:
 
 
 class AiAnalysisResult(TimestampMixin, Base):
-    """모든 AI 모듈(proofread·classify·validate·related...)의 결과 적재 테이블.
-
-    analysis_type 으로 모듈을 구분하고, 실제 결과는 result(JSONB)에 담는다.
-    """
+    """모든 AI 모듈의 결과 적재 테이블"""
 
     __tablename__ = "ai_analysis_results"
 
@@ -31,11 +28,11 @@ class AiAnalysisResult(TimestampMixin, Base):
         ForeignKey("document_versions.id", ondelete="CASCADE"),
         nullable=False,
     )
-    # "proofread" · "classify" · "validate" · "related" ...
+    # "proofread" / "classify" / "validate" / "related" ...
     analysis_type: Mapped[str] = mapped_column(String(50), nullable=False)
-    # RUNNING · COMPLETED · FAILED
+    # RUNNING / COMPLETED / FAILED
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="COMPLETED")
-    # 결과를 만든 LLM provider 식별자. 예: "mock", "openai:gpt-4o-mini"
+    # 결과를 만든 LLM provider 식별자
     provider: Mapped[str | None] = mapped_column(String(100))
     result: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     error: Mapped[str | None] = mapped_column(Text)

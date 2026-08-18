@@ -27,7 +27,7 @@ class DocumentSection(CreatedAtMixin, Base):
     )
     title: Mapped[str | None] = mapped_column(String(1000))
     section_type: Mapped[str | None] = mapped_column(String(50))
-    # heading 깊이(1~9, 작을수록 상위). 본문/표 등 비-heading 은 100(BODY_LEVEL).
+    # heading 깊이(1~9, 작을수록 상위) 본문/표 등 비-heading 은 100(BODY_LEVEL)
     level: Mapped[int | None] = mapped_column(Integer)
     page_start: Mapped[int | None] = mapped_column(Integer)
     page_end: Mapped[int | None] = mapped_column(Integer)

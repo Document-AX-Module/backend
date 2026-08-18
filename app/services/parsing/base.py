@@ -1,8 +1,4 @@
-"""파서 공통 모델.
-
-파일 포맷과 무관하게 파서는 UnifiedDocument(Section 목록)를 산출한다.
-level 규약: heading = 1..9(작을수록 상위), 본문/표/기타 = 100(가장 가까운 heading 아래로 매달림).
-"""
+"""파서 공통 모델"""
 
 from __future__ import annotations
 

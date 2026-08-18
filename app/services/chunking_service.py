@@ -1,9 +1,9 @@
-"""청킹 파이프라인.
+"""청킹 파이프라인
 
-파싱된 document_sections 를 RAG 검색 단위인 document_chunks 로 변환한다.
-단순 N자 절단이 아니라 Section 경계를 보존하고, 긴 섹션만 문장 단위로 분할(overlap 포함)한다.
-각 chunk 에는 상위 heading 경로(breadcrumb)를 meta 에 담아 검색 문맥을 보강한다.
-processing_status: PARSED → CHUNKING → CHUNKED (임베딩은 Phase 9 에서 READY 로 이어짐).
+파싱된 document_sections 를 RAG 검색 단위인 document_chunks 로 변환
+단순 N자 절단이 아니라 Section 경계를 보존하고 긴 섹션만 문장 단위로 분할
+각 chunk 에는 상위 heading 경로를 meta 에 담아 검색 문맥을 보강
+processing_status: PARSED → CHUNKING → CHUNKED
 """
 
 from __future__ import annotations
@@ -20,7 +20,6 @@ from app.models.document_version import DocumentVersion
 
 logger = logging.getLogger(__name__)
 
-# 문장 종결(한국어/영어) 또는 줄바꿈 기준 분할
 _SENTENCE_RE = re.compile(r"(?<=[.!?。」』\n])\s+")
 
 
@@ -59,7 +58,7 @@ def split_to_size(text: str, max_chars: int, overlap: int) -> list[str]:
 
 
 def _heading_path(section: DocumentSection, by_id: dict[int, DocumentSection]) -> list[str]:
-    """부모 체인을 따라 올라가며 heading 제목을 수집(root 순서)."""
+    """부모 체인을 따라 올라가며 heading 제목 수집"""
     path: list[str] = []
     parent_id = section.parent_section_id
     while parent_id is not None:
@@ -130,7 +129,7 @@ def chunk_version(db, version_id: int) -> None:
         version.processing_status = "CHUNKED"
         db.commit()
         logger.info("chunked version %s: %s chunks", version_id, len(rows))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         db.rollback()
         version = db.get(DocumentVersion, version_id)
         if version is not None:

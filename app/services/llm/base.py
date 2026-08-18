@@ -19,7 +19,7 @@ class ProofreadFinding:
     original: str  # 원문 표현
     suggestion: str  # 교정안
     reason: str  # 교정 이유(사용자 노출)
-    # spelling(맞춤법) · spacing(띄어쓰기) · grammar(문법) · expression(표현)
+    # spelling(맞춤법) / spacing(띄어쓰기) / grammar(문법) / expression(표현)
     category: str = "spelling"
 
 
@@ -27,7 +27,7 @@ class ProofreadFinding:
 class LLMProvider(Protocol):
     """LLM provider 인터페이스. proofread 외 모듈도 이 뒤에 붙는다."""
 
-    name: str  # 결과 적재용 식별자. 예: "mock", "openai:gpt-4o-mini"
+    name: str
 
     def proofread(self, text: str) -> list[ProofreadFinding]:
         """text 를 검토해 교정 제안 목록을 반환한다."""

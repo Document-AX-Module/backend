@@ -10,7 +10,7 @@ settings = get_settings()
 engine = create_engine(settings.database_url, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# Alembic autogenerate 가 일관된 제약조건 이름을 생성하도록 규칙을 고정한다.
+# Alembic autogenerate 가 일관된 제약조건 이름을 생성하도록 규칙을 고정
 NAMING_CONVENTION = {
     "ix": "ix_%(column_0_label)s",
     "uq": "uq_%(table_name)s_%(column_0_name)s",

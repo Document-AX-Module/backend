@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 class OpenAILLMProvider:
-    """OpenAI Chat Completions 로 교정하는 provider (httpx 직접 호출)."""
+    """OpenAI Chat Completions 로 교정하는 provider"""
 
     def __init__(
         self,
@@ -73,8 +73,6 @@ class OpenAILLMProvider:
             raise LLMConfigError("OPENAI_API_KEY 가 설정되지 않았습니다")
         payload = {
             "model": self._model,
-            # 최신 모델(gpt-5.x 계열)은 temperature 커스텀을 막고 기본값(1)만 허용하므로
-            # 아예 보내지 않는다. (구모델은 어차피 기본값 1과 동일하게 동작)
             "response_format": {"type": "json_object"},
             "messages": [
                 {"role": "system", "content": system},
@@ -134,12 +132,7 @@ class OpenAILLMProvider:
         return findings
 
     def _normalize_category(self, raw) -> str | None:
-        """응답의 category 를 허용 목록에 맞춘다. 제외 대상이면 None.
-
-        - 명시적으로 끈 유형(expression/grammar 등)이면 버린다.
-        - 라벨이 오타거나 처음 보는 값이면 버리지 않고 기본 카테고리로 보정한다.
-          모델이 라벨을 헛짚었다고 멀쩡한 오탈자 지적까지 잃을 이유는 없다.
-        """
+        """응답의 category 를 허용 목록에 맞춘다. 제외 대상이면 None"""
         category = str(raw or "").strip().lower()
         if category in self._allowed:
             return category

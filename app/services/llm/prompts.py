@@ -1,18 +1,10 @@
-"""LLM 프롬프트 모음.
-
-AI 모듈(proofread·classify·validate·RAG ...)의 프롬프트를 코드와 분리해 한 곳에서 관리한다.
-새 모듈을 추가하면 여기에 프롬프트 상수를 추가하고, provider/service 에서 import 해서 쓴다.
-"""
+"""LLM 프롬프트 모음"""
 
 from __future__ import annotations
 
 from collections.abc import Iterable
 
 # ── Proofread ──
-# 검사 범위는 설정(PROOFREAD_CATEGORIES)으로 정하고, 프롬프트를 그때그때 만든다.
-# 범위를 좁혀도 category enum 을 함께 좁히는 게 핵심 — 열어 두면 모델이 제외 대상을
-# 남은 카테고리에 욱여넣어 라벨만 바뀐 채 그대로 올라온다.
-
 KNOWN_CATEGORIES = ("spelling", "spacing", "grammar", "expression")
 
 CATEGORY_LABELS = {
@@ -22,8 +14,6 @@ CATEGORY_LABELS = {
     "expression": "어색한 표현·문체",
 }
 
-# 제외된 카테고리별로 "이건 지적하지 마라"고 못박을 문구.
-# 문서가 길어질수록 모델이 표현·문맥 지적을 쏟아내므로 명시적으로 막아야 한다.
 _EXCLUSION_RULES = {
     "expression": (
         "- 문장이 어색하다 / 더 자연스럽게 / 간결하게 같은 표현·문체 제안\n"

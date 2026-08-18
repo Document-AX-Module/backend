@@ -28,12 +28,12 @@ from app.services.llm import LLMError, LLMProvider, get_llm_provider
 logger = logging.getLogger(__name__)
 
 ANALYSIS_TYPE = "proofread"
-# 파싱이 끝나 섹션이 존재하는 상태들(이 중 하나면 proofread 가능)
+# 파싱이 끝나 섹션이 존재하는 상태들
 _READY_STATES = {"PARSED", "CHUNKING", "CHUNKED", "EMBEDDING", "READY"}
 
 
 class DocumentNotReadyError(Exception):
-    """아직 파싱되지 않아 검토할 섹션이 없는 문서."""
+    """아직 파싱되지 않아 검토할 섹션이 없는 문서"""
 
     def __init__(self, status: str) -> None:
         self.status = status
@@ -85,7 +85,7 @@ class ProofreadService:
     def create_pending(
         self, document_id: int, *, created_by: str | None
     ) -> AiAnalysisResult:
-        """검증 후 RUNNING 레코드를 만들어 반환한다(실제 교정은 백그라운드에서)."""
+        """검증 후 RUNNING 레코드를 만들어 반환"""
         doc = self.documents.get(document_id)
         if doc is None:
             raise DocumentNotFoundError(document_id)
@@ -109,7 +109,7 @@ class ProofreadService:
                 created_by=created_by,
             )
         )
-        # 완료/실패는 백그라운드 잡이 별도로 남긴다(run_proofread_task).
+        # 완료/실패는 백그라운드 잡이 별도로 남긴다
         self.activity.record(
             Action.ANALYSIS_START,
             project_id=doc.project_id,
@@ -141,7 +141,7 @@ class ProofreadService:
 def _iter_batches(
     items: list[tuple], max_chars: int, max_sections: int
 ) -> Iterator[list[tuple]]:
-    """(section, text) 목록을 글자수/개수 상한으로 배치 그룹핑."""
+    """(section, text) 목록을 글자수/개수 상한으로 배치 그룹핑"""
     batch: list[tuple] = []
     total = 0
     for section, text in items:
@@ -155,7 +155,7 @@ def _iter_batches(
 
 
 def run_proofread_task(analysis_id: int) -> None:
-    """BackgroundTasks 진입점 — 자체 세션으로 배치 교정을 수행하고 레코드를 갱신한다."""
+    """BackgroundTasks 진입점 — 자체 세션으로 배치 교정을 수행하고 레코드를 갱신한다"""
     db = SessionLocal()
     try:
         settings = get_settings()
@@ -170,7 +170,7 @@ def run_proofread_task(analysis_id: int) -> None:
             return
 
         doc = documents.get(record.document_id)
-        # 요청 컨텍스트 밖이라 행위자를 DI 로 못 받는다 — 분석을 시작한 사용자로 귀속시킨다.
+        # 요청 컨텍스트 밖이라 행위자를 DI 로 못 받는다
         actor_id = (
             int(record.created_by)
             if record.created_by and record.created_by.isdigit()

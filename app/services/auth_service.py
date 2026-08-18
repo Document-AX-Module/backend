@@ -16,7 +16,7 @@ class AuthService:
     def get_or_create_user(self, identity: ExternalIdentity) -> User:
         user = self.users.get_by_provider(identity.provider, identity.sub)
         if user is None:
-            # 같은 이메일이 다른 provider 로 이미 있으면 그 계정을 재사용한다.
+            # 같은 이메일이 다른 provider 로 이미 있으면 그 계정을 재사용
             user = self.users.get_by_email(identity.email)
         if user is None:
             user = self.users.create(

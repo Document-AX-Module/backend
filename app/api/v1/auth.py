@@ -1,5 +1,6 @@
 import secrets
 from typing import Annotated
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
@@ -28,6 +29,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 REFRESH_COOKIE = "refresh_token"
 STATE_COOKIE = "oauth_state"
+FRONTEND_COOKIE = "oauth_frontend"
 COOKIE_PATH = "/api/v1/auth"
 
 ProviderPath = Annotated[
@@ -41,6 +43,20 @@ ProviderPath = Annotated[
 
 def _callback_url(request: Request, provider: str) -> str:
     return str(request.url_for("auth_callback", provider=provider))
+
+
+def _frontend_origin(request: Request, requested_origin: str | None = None) -> str:
+    """로그인을 시작한 프론트 origin을 결정"""
+    if requested_origin and requested_origin in settings.cors_allow_origins:
+        return requested_origin
+
+    referer = request.headers.get("referer")
+    if referer:
+        parsed = urlsplit(referer)
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        if origin in settings.cors_allow_origins:
+            return origin
+    return settings.frontend_url
 
 
 def _set_refresh_cookie(response: Response, token: str) -> None:
@@ -62,11 +78,7 @@ def _set_refresh_cookie(response: Response, token: str) -> None:
     response_description='예: `{"providers": ["mock", "google"]}`',
 )
 def list_providers() -> ProvidersResponse:
-    """이 서버에서 쓸 수 있는 OAuth provider 키를 돌려준다. 인증 불필요.
-
-    `AUTH_PROVIDERS` 환경변수로 정해지며, 프론트 로그인 화면의 버튼 구성에 쓰인다.
-    `mock` 은 크리덴셜 없이 로그인되는 개발 전용 provider 다.
-    """
+    """이 서버에서 쓸 수 있는 OAuth provider 키를 돌려줌"""
     return ProvidersResponse(providers=settings.auth_providers)
 
 
@@ -76,12 +88,22 @@ def list_providers() -> ProvidersResponse:
     response_description="IdP 인증 페이지로 307 리다이렉트 + state 쿠키",
     responses={400: {"description": "지원하지 않는 provider"}},
 )
-def login(provider: ProviderPath, request: Request) -> RedirectResponse:
-    """IdP 인증 페이지로 리다이렉트하고, CSRF 방지용 `state` 를 쿠키에 심는다.
-
-    **Swagger 의 "Try it out" 으로는 동작하지 않는다** — 리다이렉트 응답이라 fetch/CORS 에
-    걸린다. 브라우저 주소창에 직접 입력해서 테스트할 것.
-    """
+def login(
+    provider: ProviderPath,
+    request: Request,
+    origin: Annotated[
+        str | None,
+        Query(
+            description=(
+                "로그인을 시작한 프론트 origin (`window.location.origin`). "
+                "PC(localhost)와 휴대폰(LAN IP/도메인)을 구분해 콜백을 돌려보내는 데 쓰인다. "
+                "`CORS_ALLOW_ORIGINS` 화이트리스트에 없는 값은 무시된다."
+            ),
+            examples=["http://192.168.0.32:3000"],
+        ),
+    ] = None,
+) -> RedirectResponse:
+    """IdP 인증 페이지로 리다이렉트하고, CSRF 방지용 state를 쿠키에 심는다"""
     try:
         prov = get_provider(provider)
     except ProviderError as exc:
@@ -93,6 +115,15 @@ def login(provider: ProviderPath, request: Request) -> RedirectResponse:
     response.set_cookie(
         STATE_COOKIE,
         state,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite,
+        path=COOKIE_PATH,
+        max_age=600,
+    )
+    response.set_cookie(
+        FRONTEND_COOKIE,
+        _frontend_origin(request, origin),
         httponly=True,
         secure=settings.cookie_secure,
         samesite=settings.cookie_samesite,
@@ -121,12 +152,7 @@ def callback(
     auth_service: AuthService = Depends(get_auth_service),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
-    """IdP 가 리다이렉트로 호출하는 엔드포인트. **직접 호출하지 않는다.**
-
-    state 를 검증하고 code 를 사용자 신원으로 교환한 뒤, 최초 로그인이면 `users` 행을 만든다.
-    refresh 토큰을 httpOnly 쿠키에 심고 프론트로 돌려보낸다. access 토큰은 여기서 주지 않고,
-    프론트가 이어서 `POST /auth/token/refresh` 로 받아 간다.
-    """
+    """IdP 가 리다이렉트로 호출하는 엔드포인트"""
     expected_state = request.cookies.get(STATE_COOKIE)
     if not expected_state or expected_state != state:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid oauth state")
@@ -144,9 +170,11 @@ def callback(
     )
     refresh = create_refresh_token(user.id)
 
-    response = RedirectResponse(f"{settings.frontend_url}/auth/callback")
+    frontend_origin = request.cookies.get(FRONTEND_COOKIE) or settings.frontend_url
+    response = RedirectResponse(f"{frontend_origin}/auth/callback")
     _set_refresh_cookie(response, refresh)
     response.delete_cookie(STATE_COOKIE, path=COOKIE_PATH)
+    response.delete_cookie(FRONTEND_COOKIE, path=COOKIE_PATH)
     return response
 
 
@@ -160,11 +188,7 @@ def callback(
 def refresh_access_token(
     request: Request, db: Session = Depends(get_db)
 ) -> TokenResponse:
-    """httpOnly refresh 쿠키를 검증하고 새 access 토큰을 발급한다. 본문은 없다.
-
-    로그인 직후와 access 토큰 만료 시(프론트가 401 을 받으면 자동으로) 호출된다.
-    Swagger 에서 쓰려면 먼저 브라우저로 `/auth/login/{provider}` 를 완료해 쿠키가 있어야 한다.
-    """
+    """httpOnly refresh 쿠키를 검증하고 새 access 토큰 발급"""
     token = request.cookies.get(REFRESH_COOKIE)
     if not token:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "no refresh token")
@@ -191,11 +215,7 @@ def refresh_access_token(
     response_description="본문 없음(204)",
 )
 def logout(response: Response) -> None:
-    """refresh 쿠키를 삭제한다.
-
-    access 토큰은 서버에 보관하지 않는 stateless JWT 라 무효화되지 않는다 —
-    남은 유효기간(기본 15분) 동안은 계속 통과하므로 프론트가 메모리에서 함께 지워야 한다.
-    """
+    """refresh 쿠키 삭제"""
     response.delete_cookie(REFRESH_COOKIE, path=COOKIE_PATH)
 
 
@@ -207,5 +227,5 @@ def logout(response: Response) -> None:
     responses={401: {"description": "토큰 없음/만료/무효"}},
 )
 def me(current_user: User = Depends(get_current_user)) -> User:
-    """Bearer 토큰이 가리키는 사용자 정보를 돌려준다. 토큰 유효성 확인용으로도 쓴다."""
+    """Bearer 토큰이 가리키는 사용자 정보를 돌려줌"""
     return current_user

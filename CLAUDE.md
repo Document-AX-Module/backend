@@ -82,10 +82,10 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload                      # dev server at http://localhost:8000
 ```
 
-Docker Compose lives in the **parent directory** (`AX-Module/docker-compose.yml`, the folder the docs call `sidepjt/`), not in `backend/`. It orchestrates the whole platform (db + backend today; frontend/embedding/storage as commented placeholders). Run it from the parent:
+Docker Compose lives in the **parent directory** (`sidepjt/docker-compose.yml`, the folder the docs call `sidepjt/`), not in `backend/`. It orchestrates the whole platform (db + backend today; frontend/embedding/storage as commented placeholders). Run it from the parent:
 
 ```bash
-cd ..            # into the AX-Module root
+cd ..            # into the sidepjt root
 docker compose up --build
 ```
 

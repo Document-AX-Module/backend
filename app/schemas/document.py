@@ -5,14 +5,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class ProcessingStatus(str, Enum):
-    """`document_versions.processing_status` 값 — 업로드 후 처리 파이프라인 상태.
-
-    `UPLOADED → PARSING → PARSED → CHUNKING → CHUNKED → EMBEDDING → READY`
-    순으로 전이하며, 어느 단계에서든 실패하면 `FAILED` 로 간다.
-    임베딩(MVP2)이 아직 없어 현재는 `CHUNKED` 가 사실상 종착 상태다.
-
-    문서 생명주기를 뜻하는 `documents.status` 와는 다른 값이니 혼동하지 말 것.
-    """
+    """document_versions.processing_status 값 — 업로드 후 처리 파이프라인 상태
+    UPLOADED → PARSING → PARSED → CHUNKING → CHUNKED → EMBEDDING → READY"""
 
     UPLOADED = "UPLOADED"
     PARSING = "PARSING"
@@ -92,11 +86,7 @@ class SectionRead(BaseModel):
 
 
 class RecentDocumentRead(BaseModel):
-    """대시보드 "최근 문서" 카드용 납작한 뷰.
-
-    프로젝트 경로와 상태 배지를 추가 요청 없이 바로 그릴 수 있도록,
-    `DocumentRead` 와 달리 프로젝트 이름과 현재 버전의 처리 상태를 펼쳐서 담는다.
-    """
+    """대시보드 최근 문서 카드용"""
 
     id: int
     name: str

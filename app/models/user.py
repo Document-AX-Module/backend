@@ -10,7 +10,7 @@ from app.models.mixins import TimestampMixin
 
 
 class User(TimestampMixin, Base):
-    """로그인 사용자. OAuth provider + provider 내 고유 식별자(sub)로 매핑한다."""
+    """로그인 사용자 OAuth provider + provider 내 고유 식별자로 매핑"""
 
     __tablename__ = "users"
     __table_args__ = (

@@ -91,11 +91,7 @@ def list_documents(
     service: DocumentService = Depends(get_document_service),
     _: User = Depends(get_current_user),
 ) -> list[DocumentRead]:
-    """프로젝트의 문서를 조회한다. 세 필터는 AND 로 결합된다.
-
-    각 항목에는 `created_by`(사용자 id)를 풀어 쓴 `author`(이름·이메일)와
-    `current_version`(파일명·크기·처리 상태)이 함께 채워져 나온다.
-    """
+    """프로젝트의 문서 목록을 돌려준다"""
     try:
         return service.list_document_reads(
             project_id,
@@ -134,17 +130,7 @@ async def upload_document(
     activity: ActivityService = Depends(get_activity_service),
     current_user: User = Depends(get_current_user),
 ) -> DocumentUploadResponse:
-    """파일을 저장하고 문서 + v1 버전을 만든 뒤, **즉시 202 를 반환한다.**
-
-    응답을 보낸 뒤 백그라운드에서 파싱 → 청킹이 이어진다
-    (`UPLOADED → PARSING → PARSED → CHUNKING → CHUNKED`). 따라서 응답의
-    `version.processing_status` 는 거의 항상 `UPLOADED` 이고, 완료 여부는
-    `GET /versions/{version_id}/status` 를 폴링해서 확인해야 한다.
-
-    파서가 있는 형식은 **txt · md · docx · pdf · hwpx** 다. 그 외(hwp/xlsx/pptx)는
-    업로드 자체는 되지만 파싱 단계에서 `FAILED` 가 된다.
-    스캔 PDF 는 네이티브 텍스트가 없으면 Tesseract OCR(kor+eng)로 넘어간다.
-    """
+    """파일을 저장하고 문서 + v1 버전을 만든 뒤 즉시 202를 반환한다. 이후 백그라운드에서 파싱과 청킹이 진행되며 상태는 버전 상태 조회로 폴링해 확인한다"""
     data = await file.read()
     try:
         document, version = service.upload_document(
@@ -175,8 +161,6 @@ async def upload_document(
     return DocumentUploadResponse(document=document, version=version)
 
 
-# ⚠️ 이 라우트는 반드시 "/documents/{document_id}" 보다 **먼저** 등록돼야 한다.
-# 순서가 뒤집히면 "recent" 가 document_id 로 매칭돼 int 파싱에 실패한다(422).
 @router.get(
     "/documents/recent",
     response_model=list[RecentDocumentRead],
@@ -193,14 +177,7 @@ def list_recent_documents(
     service: DocumentService = Depends(get_document_service),
     _: User = Depends(get_current_user),
 ) -> list[RecentDocumentRead]:
-    """대시보드 "최근 문서" 카드용 — 전체 프로젝트에서 최근 등록된 문서를 모아 준다.
-
-    `/projects/{project_id}/documents` 와 달리 **프로젝트를 가로지른다.** 카드에서
-    프로젝트 경로와 상태 배지를 바로 그릴 수 있도록 `project_name` 과
-    현재 버전의 `processing_status` 를 펼쳐서 담는다(추가 요청 불필요).
-
-    `author` 나 버전 상세는 담지 않는다 — 필요하면 `/documents/{document_id}` 를 볼 것.
-    """
+    """대시보드 최근 문서 카드에 쓰는 최근 문서 목록을 돌려준다"""
     try:
         return service.list_recent_documents(limit=limit, project_id=project_id)
     except ProjectNotFoundError:
@@ -219,11 +196,7 @@ def get_document(
     service: DocumentService = Depends(get_document_service),
     _: User = Depends(get_current_user),
 ) -> DocumentRead:
-    """문서 하나를 조회한다. 목록과 동일하게 작성자·현재 버전이 채워진다.
-
-    섹션/청크 같은 본문 내용은 포함되지 않는다 — `current_version.id` 로
-    `/versions/{version_id}/sections` 를 따로 부를 것.
-    """
+    """문서 하나를 조회한다"""
     try:
         return service.get_document_read(document_id)
     except DocumentNotFoundError:
@@ -242,10 +215,7 @@ def list_versions(
     service: DocumentService = Depends(get_document_service),
     _: User = Depends(get_current_user),
 ) -> list[DocumentVersionRead]:
-    """문서의 모든 버전을 최신순으로 돌려준다.
-
-    새 버전(v2+) 업로드가 아직 미구현이라 **현재는 항상 1건**이다.
-    """
+    """문서의 모든 버전을 최신순으로 돌려준다"""
     try:
         return service.list_versions(document_id)
     except DocumentNotFoundError:
@@ -266,7 +236,7 @@ def download_document(
     service: DocumentService = Depends(get_document_service),
     _: User = Depends(get_current_user),
 ) -> FileResponse:
-    """**현재 버전**의 원본 파일을 그대로 내려준다. 파싱 결과가 아니라 업로드한 바이트다."""
+    """현재 버전의 원본 파일을 그대로 내려준다. 파싱 결과가 아니라 업로드했던 원본 바이트다"""
     try:
         version, path = service.resolve_download(document_id)
     except DocumentNotFoundError:
@@ -291,7 +261,7 @@ def get_version(
     service: DocumentService = Depends(get_document_service),
     _: User = Depends(get_current_user),
 ) -> DocumentVersionRead:
-    """버전 하나의 메타데이터(파일명·MIME·크기·sha256 체크섬·처리 상태)를 조회한다."""
+    """버전 하나의 메타데이터를 조회한다"""
     try:
         return service.get_version(version_id)
     except VersionNotFoundError:
@@ -310,15 +280,7 @@ def get_version_status(
     service: DocumentService = Depends(get_document_service),
     _: User = Depends(get_current_user),
 ) -> VersionStatusResponse:
-    """업로드 후 파싱·청킹 진행 상황을 확인한다. 업로드 화면이 주기적으로 호출하는 용도.
-
-    `progress` 는 상태에 매긴 고정 백분율이라 단계 안에서 연속적으로 오르지 않는다
-    (UPLOADED 5 · PARSING 25 · PARSED 45 · CHUNKING 65 · CHUNKED 75 ·
-    EMBEDDING 85 · READY 100 · FAILED 0).
-
-    임베딩이 미구현이라 **정상 종료는 `CHUNKED`(75%)** 다. 100% 를 기다리면 무한 폴링이 된다.
-    실패 사유는 이 응답에 담기지 않는다.
-    """
+    """업로드 후 파싱·청킹 진행 상황을 확인한다"""
     try:
         version = service.get_version(version_id)
     except VersionNotFoundError:
@@ -342,15 +304,7 @@ def list_sections(
     service: DocumentService = Depends(get_document_service),
     _: User = Depends(get_current_user),
 ) -> list[SectionRead]:
-    """파서가 만든 섹션을 문서 순서대로 돌려준다. 파싱 전이면 빈 배열이다.
-
-    **필드 규칙** — 형식(PDF/DOCX/HWPX/TXT)과 무관하게 동일하다:
-
-    - `section_type="heading"` 이면 `title` 에만 값이 있고 `content` 는 비어 있다(중복 표시 방지)
-    - 본문·표는 반대로 `content` 에만 값이 있다
-    - `level` 은 제목 깊이 1~9, 본문·표는 100 — 접이식 트리를 그릴 때 쓴다
-    - `parent_section_id` 로 계층이 이어지고, `meta` 에는 페이지·bbox 같은 원본 좌표가 들어간다
-    """
+    """파서가 만든 섹션을 문서 순서대로 돌려준다"""
     try:
         return service.list_sections(version_id)
     except VersionNotFoundError:
@@ -369,14 +323,7 @@ def list_chunks(
     service: DocumentService = Depends(get_document_service),
     _: User = Depends(get_current_user),
 ) -> list[ChunkRead]:
-    """임베딩·검색의 최소 단위인 청크를 돌려준다. 청킹 전이면 빈 배열이다.
-
-    구조 기반으로 자른다 — 제목 섹션 자체는 청크가 되지 않고, 대신 각 청크의
-    `metadata.heading_path` 에 상위 제목 경로가 붙는다. 섹션이 설정된 최대 길이를
-    넘을 때만 문장 단위로 쪼개며 앞뒤를 조금 겹친다.
-
-    아직 임베딩 단계가 없어 청크는 만들어져 있어도 벡터는 비어 있다.
-    """
+    """임베딩·검색의 최소 단위인 청크를 돌려준다"""
     try:
         return service.list_chunks(version_id)
     except VersionNotFoundError:
@@ -396,13 +343,8 @@ def delete_document(
     activity: ActivityService = Depends(get_activity_service),
     _: User = Depends(get_current_user),
 ) -> None:
-    """문서를 삭제한다. 되돌릴 수 없다.
-
-    모든 버전·섹션·청크·AI 분석 결과가 CASCADE 로 함께 지워지고,
-    저장소의 원본 파일도 정리된다.
-    """
+    """문서를 삭제한다"""
     try:
-        # 지우고 나면 읽을 수 없으므로 로그용 정보를 먼저 확보한다.
         doc = service.get_document(document_id)
         project_id, name = doc.project_id, doc.name
         service.delete_document(document_id)

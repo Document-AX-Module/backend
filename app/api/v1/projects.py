@@ -36,11 +36,7 @@ def list_projects(
     service: ProjectService = Depends(get_project_service),
     _: User = Depends(get_current_user),
 ) -> list[ProjectRead]:
-    """모든 프로젝트를 돌려준다.
-
-    아직 멤버십 테이블이 없어 **사용자별 필터링을 하지 않는다** — 로그인만 하면 전부 보인다.
-    설계상 예정된 폴더수·문서수·READY수 같은 집계 필드도 아직 붙지 않았다.
-    """
+    """모든 프로젝트를 돌려준다. 아직 멤버십 필터링은 없어 로그인만 하면 전부 보인다"""
     return service.list_projects()
 
 
@@ -58,10 +54,7 @@ def create_project(
     activity: ActivityService = Depends(get_activity_service),
     current_user: User = Depends(get_current_user),
 ) -> ProjectRead:
-    """새 프로젝트를 만든다.
-
-    `created_by` 는 요청 본문으로 받지 않고 **로그인 사용자 id 로 서버가 채운다**.
-    """
+    """새 프로젝트를 만든다. created_by는 로그인 사용자 id로 서버가 채운다"""
     project = service.create_project(payload, created_by=str(current_user.id))
     activity.record(
         Action.PROJECT_CREATE,
@@ -107,11 +100,7 @@ def update_project(
     activity: ActivityService = Depends(get_activity_service),
     _: User = Depends(get_current_user),
 ) -> ProjectRead:
-    """이름·설명을 부분 수정한다.
-
-    본문에 **보낸 필드만** 반영된다(`exclude_unset`). 생략한 필드는 기존 값을 유지하므로,
-    값을 지우려면 명시적으로 `null` 을 보내야 한다.
-    """
+    """이름·설명을 부분 수정한다. 보낸 필드만 반영되고 생략한 필드는 기존 값을 유지한다"""
     try:
         project = service.update_project(project_id, payload)
         activity.record(
@@ -143,10 +132,7 @@ def delete_project(
     activity: ActivityService = Depends(get_activity_service),
     _: User = Depends(get_current_user),
 ) -> None:
-    """프로젝트를 삭제한다.
-
-    **주의:** 소속 폴더·문서·버전·섹션·청크가 DB CASCADE 로 함께 지워진다. 되돌릴 수 없다.
-    """
+    """프로젝트를 삭제한다. 소속 폴더·문서·버전·섹션·청크가 CASCADE로 함께 지워지며 되돌릴 수 없다"""
     try:
         # 지우고 나면 이름을 읽을 수 없으므로 로그용으로 먼저 확보한다.
         name = service.get_project(project_id).name

@@ -1,8 +1,8 @@
-"""파일 저장 추상화.
+"""파일 저장 추상화
 
-설계서의 StorageProvider — 지금은 LocalStorageProvider 만 구현한다.
-향후 MinIO/S3 로 교체할 수 있도록 인터페이스를 유지한다.
-DB 에는 실제 파일이 아니라 storage_path(루트 기준 상대경로)만 저장한다.
+설계서의 StorageProvider — 지금은 LocalStorageProvider 만 구현
+향후 MinIO/S3 로 교체할 수 있도록 인터페이스를 유지
+DB 에는 실제 파일이 아니라 storage_path만 저장
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ class LocalStorageProvider:
         target_dir.mkdir(parents=True, exist_ok=True)
         target_path = target_dir / filename
         target_path.write_bytes(data)
-        # DB 에는 루트 기준 상대경로를 저장한다 (POSIX 구분자로 정규화).
+        # DB 에는 루트 기준 상대경로를 저장한다
         return (Path(relative_dir) / filename).as_posix()
 
     def resolve(self, storage_path: str) -> Path:

@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 
 class EmbeddingModel(CreatedAtMixin, Base):
-    """등록된 로컬 Embedding 모델 정보. 모델별 비교/교체를 위해 별도 관리한다."""
+    """등록된 로컬 Embedding 모델 정보"""
 
     __tablename__ = "embedding_models"
 

@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 
 class Document(TimestampMixin, Base):
-    """논리적 문서. 실제 파일은 document_versions 로 관리한다."""
+    """논리적 문서/ 실제 파일은 document_versions 로 관리"""
 
     __tablename__ = "documents"
 
@@ -29,8 +29,7 @@ class Document(TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     document_type: Mapped[str | None] = mapped_column(String(50))
-    # 상태 컬럼은 일부러 두지 않는다 — 문서 상태 = 현재 버전의 processing_status.
-    # documents <-> document_versions 순환 FK 를 피하기 위해 지금은 FK 제약 없이 보관한다.
+    # 상태 컬럼은 일부러 두지 않는다 — 문서 상태 = 현재 버전의 processing_status
     current_version_id: Mapped[int | None] = mapped_column(BigInteger)
     created_by: Mapped[str | None] = mapped_column(String(255))
 

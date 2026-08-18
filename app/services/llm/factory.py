@@ -7,11 +7,11 @@ from app.services.llm.openai_provider import OpenAILLMProvider
 
 
 def get_llm_provider(settings: Settings) -> LLMProvider:
-    """설정에 따라 LLM provider 를 고른다.
+    """설정에 따라 LLM provider를 고름
 
-    - llm_provider="mock"   → 항상 규칙 기반 Mock
-    - llm_provider="openai" → 항상 OpenAI(키 없으면 호출 시 LLMConfigError)
-    - llm_provider="auto"   → 키 있으면 OpenAI, 없으면 Mock (기본값)
+    - llm_provider="mock" → 항상 규칙 기반 Mock
+    - llm_provider="openai" → 항상 OpenAI
+    - llm_provider="auto" → 키 있으면 OpenAI, 없으면 Mock
     """
     mode = settings.llm_provider.lower()
     if mode == "mock":

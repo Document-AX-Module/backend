@@ -1,12 +1,4 @@
-"""HWPX(신형, OWPML) 파서.
-
-HWPX 는 zip 컨테이너이고 본문은 Contents/section*.xml 에 들어 있다.
-네임스페이스가 버전마다 달라 태그의 localname(끝부분)으로 매칭한다.
-
-구조 주의: <hp:p>(문단) 안에 <hp:run> 이 있고, run 안에 <hp:tbl>(표)이 올 수 있으며,
-표 셀(<hp:tc>) 안에는 다시 <hp:subList> → <hp:p> 로 문단이 중첩된다.
-따라서 문단의 '자기 텍스트'는 하위 표를 제외하고 모으고, 표는 별도 섹션으로 뽑는다.
-"""
+"""HWPX(신형, OWPML) 파서"""
 
 from __future__ import annotations
 

@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class ProjectCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: str | None = None
-    # created_by 는 클라이언트가 지정하지 않는다 — 서버가 로그인 사용자로 채운다.
+    # created_by 는 클라이언트가 지정하지 않는다 — 서버가 로그인 사용자로 채운다
 
 
 class ProjectUpdate(BaseModel):

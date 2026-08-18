@@ -18,12 +18,7 @@ TARGET_LABEL_MAX = 500
 
 
 class Action:
-    """활동 코드 목록.
-
-    DB 에는 표시 문구가 아니라 **이 코드**를 저장한다. 문구를 바꿔도 과거 로그가
-    안 깨지고, 코드로 필터링할 수 있기 때문이다. 새 코드를 추가하면
-    `ACTION_LABELS` 에도 반드시 등록할 것.
-    """
+    """활동 코드 목록"""
 
     LOGIN = "auth.login"
 
@@ -43,7 +38,7 @@ class Action:
     ANALYSIS_FAIL = "analysis.fail"
 
 
-# 액션 코드 → (표시 문구, 프론트 배지 kind)
+# 액션 코드 
 ACTION_LABELS: dict[str, tuple[str, str]] = {
     Action.LOGIN: ("로그인", "로그인"),
     Action.PROJECT_CREATE: ("프로젝트 생성", "프로젝트"),
@@ -56,7 +51,6 @@ ACTION_LABELS: dict[str, tuple[str, str]] = {
     Action.DOCUMENT_DELETE: ("문서 삭제", "삭제"),
 }
 
-# AI 분석은 analysis_type 에 따라 문구가 갈린다 → (모듈 이름, 배지 kind)
 ANALYSIS_LABELS: dict[str, tuple[str, str]] = {
     "proofread": ("오탈자 검증", "오타"),
     "classify": ("문서 분류", "분류"),
@@ -77,17 +71,11 @@ def describe(log: ActivityLog) -> tuple[str, str]:
         analysis_type = (log.meta or {}).get("analysis_type", "")
         name, kind = ANALYSIS_LABELS.get(analysis_type, (analysis_type or "AI 분석", "분석"))
         return f"{name} {_ANALYSIS_SUFFIX[log.action]}", kind
-    # 등록되지 않은 코드도 피드에서 조용히 사라지지 않게 코드 자체를 노출한다.
     return ACTION_LABELS.get(log.action, (log.action, "기타"))
 
 
 class ActivityService:
-    """감사 로그 기록기.
-
-    **기록은 항상 best-effort** — 로그를 남기다 실패해도 본 작업(업로드·삭제 등)을
-    깨뜨리지 않는다. 반대로 본 작업이 커밋된 뒤에 호출해야 하며, 그래야 롤백된
-    작업의 로그가 남는 일도 없다.
-    """
+    """감사 로그 기록기 """
 
     def __init__(
         self, repository: ActivityLogRepository, actor: User | None = None
@@ -108,12 +96,7 @@ class ActivityService:
         target_label: str | None = None,
         meta: dict[str, Any] | None = None,
     ) -> None:
-        """활동 한 건을 남긴다. 예외를 밖으로 던지지 않는다.
-
-        행위자는 `actor`(User) → 명시적 `actor_id`/`actor_label` → 생성 시 주입된
-        actor 순으로 결정된다. 백그라운드 작업처럼 요청 사용자가 없는 곳에서는
-        `actor_id` 를 직접 넘긴다.
-        """
+        """활동 한 건을 남긴다. 예외를 밖으로 던지지 않는다"""
         who = actor or self.actor
         if who is not None:
             actor_id = who.id
@@ -151,10 +134,10 @@ def get_activity_service(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ActivityService:
-    """인증된 라우트용 DI. 로그인 사용자가 행위자로 자동 세팅된다."""
+    """인증된 라우트용 DI"""
     return ActivityService(ActivityLogRepository(db), actor=current_user)
 
 
 def activity_service_for(db: Session, actor: User | None = None) -> ActivityService:
-    """DI 밖(백그라운드 작업·OAuth 콜백)에서 세션을 직접 들고 만들 때."""
+    """DI 밖에서 세션을 직접 들고 만들 때."""
     return ActivityService(ActivityLogRepository(db), actor=actor)

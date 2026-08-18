@@ -1,7 +1,7 @@
-"""OAuth provider 추상화.
+"""OAuth provider 추상화
 
-- MockProvider: 크리덴셜 없이 로그인 플로우를 end-to-end 로 검증하기 위한 dev 전용.
-- GoogleProvider: 실제 Google OAuth (client_id/secret 준비되면 활성화).
+- MockProvider: 크리덴셜 없이 로그인 플로우를 end-to-end 로 검증하기 위한 dev 전용
+- GoogleProvider: 실제 Google OAuth
 
 새 provider(사내 SSO 등)는 AuthProvider 프로토콜을 구현해 여기에 추가한다.
 """

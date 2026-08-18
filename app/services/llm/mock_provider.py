@@ -4,10 +4,9 @@ import re
 
 from app.services.llm.base import ProofreadFinding
 
-# 키 없이도 데모가 되도록 하는 아주 단순한 규칙 사전.
-# 실제 교정은 OpenAILLMProvider(GPT)가 담당하고, 이건 개발/폴백용이다.
+# 키 없이도 데모가 되도록 하는 아주 단순한 규칙 사전
+# 실제 교정은 OpenAILLMProvider(GPT)가 담당하고 이건 개발/폴백용
 _COMMON_TYPOS: dict[str, tuple[str, str]] = {
-    # 오타 → (교정안, 이유)
     "됬": ("됐", "'되었'의 준말은 '됐'입니다"),
     "안되요": ("안돼요", "'되어요'의 준말이므로 '안돼요'가 맞습니다"),
     "안됀": ("안 된", "'안 된'으로 띄어 씁니다"),

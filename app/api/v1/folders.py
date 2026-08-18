@@ -42,11 +42,7 @@ def list_folders(
     service: FolderService = Depends(get_folder_service),
     _: User = Depends(get_current_user),
 ) -> list[FolderRead]:
-    """프로젝트의 모든 폴더를 돌려준다.
-
-    중첩된 트리가 아니라 **평탄한 목록**이다. 각 항목의 `parent_id`(최상위는 `null`)를
-    이어 붙여 클라이언트가 트리를 만든다.
-    """
+    """프로젝트의 모든 폴더를 평탄한 목록으로 돌려준다"""
     try:
         return service.list_folders(project_id)
     except ProjectNotFoundError:
@@ -72,7 +68,7 @@ def create_folder(
     activity: ActivityService = Depends(get_activity_service),
     _: User = Depends(get_current_user),
 ) -> FolderRead:
-    """폴더를 만든다. `parent_id` 를 주면 그 아래 하위 폴더로, 생략하면 최상위로 생성된다."""
+    """폴더를 만든다. parent_id를 주면 그 아래 하위 폴더로, 생략하면 최상위로 생성된다"""
     try:
         folder = service.create_folder(project_id, payload)
         activity.record(
@@ -106,11 +102,7 @@ def update_folder(
     activity: ActivityService = Depends(get_activity_service),
     _: User = Depends(get_current_user),
 ) -> FolderRead:
-    """이름을 바꾸거나 `parent_id` 로 다른 폴더 아래로 옮긴다.
-
-    이동 시 **순환을 검사한다** — 자기 자신이나 자기 자손을 부모로 지정하면 400 이다.
-    프로젝트 간 이동은 지원하지 않는다.
-    """
+    """이름을 바꾸거나 parent_id로 다른 폴더 아래로 옮긴다. 순환 이동은 400으로 막는다"""
     try:
         folder = service.update_folder(folder_id, payload)
         activity.record(
@@ -141,11 +133,7 @@ def delete_folder(
     activity: ActivityService = Depends(get_activity_service),
     _: User = Depends(get_current_user),
 ) -> None:
-    """폴더를 삭제한다.
-
-    하위 폴더는 CASCADE 로 함께 지워지지만, **문서는 지워지지 않고** `folder_id` 가
-    `null` 이 되어 프로젝트 최상위로 올라온다.
-    """
+    """폴더를 삭제한다. 하위 폴더는 함께 지워지지만 문서는 folder_id가 null이 되어 프로젝트 최상위로 올라온다"""
     try:
         # 지우고 나면 읽을 수 없으므로 로그용 정보를 먼저 확보한다.
         folder = service.get_folder(folder_id)

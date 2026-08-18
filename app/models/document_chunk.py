@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 
 class DocumentChunk(CreatedAtMixin, Base):
-    """RAG 의 최소 검색 단위. Embedding 은 chunk_embeddings 로 분리한다."""
+    """RAG 의 최소 검색 단위"""
 
     __tablename__ = "document_chunks"
 

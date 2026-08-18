@@ -3,7 +3,7 @@ from __future__ import annotations
 import statistics
 from pathlib import Path
 
-import fitz  # PyMuPDF
+import fitz
 from PIL import Image
 
 from app.services.parsing.base import (

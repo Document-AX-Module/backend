@@ -35,10 +35,7 @@ class DocumentRepository:
     def list_recent(
         self, *, limit: int, project_id: int | None = None
     ) -> list[Row]:
-        """최근 등록된 문서를 프로젝트 이름·현재 버전 상태와 함께 조인해서 가져온다.
-
-        대시보드가 프로젝트를 가로질러 조회하는 용도라 project_id 는 선택이다.
-        """
+        """최근 등록된 문서를 프로젝트 이름/현재 버전 상태와 함께 조인해서 가져옴"""
         stmt = (
             select(
                 Document.id,
