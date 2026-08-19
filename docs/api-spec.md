@@ -156,8 +156,9 @@ provider 추상화(`app/services/auth_providers.py`): `mock`(dev 전용, 크리�
 - **업로드**: multipart `file`(필수) + `folder_id`/`name`/`description`(선택). 확장자 화이트리스트(pdf/hwpx/hwp/docx/xlsx/pptx/txt/md, `.env`로 조정) + 최대 50MB + 빈 파일 거부, 위반 시 `400`. 새 문서=version 1, `current_version_id` 세팅. sha256/file_size 저장. `description`은 문서(Document) 단위 컬럼.
 - **저장**: `StorageProvider`(Local) — `storage/documents/project-{pid}/document-{did}/v{n}/{uuid}.{ext}`, DB엔 상대 `storage_path`만. 컨테이너는 `/data/storage` 볼륨.
 - **파이프라인(BackgroundTasks)**: 업로드 → `run_parse_task` → Parser(포맷별 어댑터 + PDF 스캔본 OCR) → `document_sections`(계층/bbox) → Chunking(구조 인지, heading breadcrumb, 문장분할+overlap) → `document_chunks`. 미지원 확장자(hwp/xlsx/pptx)는 `FAILED`.
+- **PDF 스캔본 OCR 품질(2026-08-18)**: OCR 경로도 네이티브 텍스트 경로와 동등하게 취급한다 — Tesseract 전에 전처리(그레이스케일→디스큐→CLAHE, `opencv-python-headless`), 줄 높이 기반 제목 인식(네이티브의 폰트크기 휴리스틱과 동일 비율), confidence 60 미만 줄은 `meta.low_confidence=true`로 표시하고 문서 전체 저신뢰 비율 30% 이상이면 서버 로그에 경고. 프론트 배지는 아직 없음 — `meta.low_confidence`를 그대로 노출만 하는 상태.
 - **Section 표현 규칙**: `heading` 섹션은 `title`만 채우고 `content`는 비운다(제목 중복 표시 방지). 본문/표는 `title` 없이 `content`만. `level`(heading 깊이 1~9, 본문/표는 100)을 저장해 `SectionRead.level`로 노출 → 프론트가 `level`+`parent_section_id`로 접이식 트리 렌더. heading 은 chunk 로 만들지 않고 breadcrumb(`chunk_metadata.heading_path`)로만 쓰인다.
-- **아직**: `PATCH /documents/{id}`, 새 버전 업로드(v2+), SSE, 임베딩(READY).
+- **아직**: `PATCH /documents/{id}`(이름/폴더/타입 변경), 사용자가 임의로 새 버전을 올리는 범용 업로드 엔드포인트(v2+ 생성 *메커니즘* 자체는 `DocumentService.create_version()`으로 이제 있지만, 지금은 아래 5절의 교정 적용(apply) 흐름에서만 호출된다 — "이 문서의 새 버전을 업로드" 라는 별도 라우트는 없음), SSE, 임베딩(READY).
 
 ---
 
@@ -168,6 +169,8 @@ provider 추상화(`app/services/auth_providers.py`): `mock`(dev 전용, 크리�
 | POST | `/api/v1/documents/{doc_id}/proofread` | 교정 시작 → `202` + RUNNING 레코드(백그라운드 처리) | ✅ (Phase 8, MVP1 마지막) |
 | GET | `/api/v1/documents/{doc_id}/analyses?type=` | AI 분석 이력(메타 목록) | ✅ |
 | GET | `/api/v1/documents/{doc_id}/analyses/{analysis_id}` | 분석 결과 상세(status 폴링 + findings) | ✅ |
+| PATCH | `/api/v1/documents/{doc_id}/analyses/{analysis_id}/findings/{finding_id}` | finding 승인/반려/보류 상태 변경 | ✅ |
+| POST | `/api/v1/documents/{doc_id}/analyses/{analysis_id}/apply` | 승인된 finding을 원본에 반영해 새 버전 생성(202, 파싱은 백그라운드) | ✅ |
 | POST | `/api/v1/documents/{doc_id}/classify` | 문서타입·카테고리·태그 | ⏳ (MVP3) |
 | POST | `/api/v1/documents/{doc_id}/validate` | 규정 검증(RULE 검색 → GPT) | ⏳ (MVP5) |
 | POST | `/api/v1/documents/{doc_id}/related` | 관련 문서 추천(vector search) | ⏳ (MVP3) |
@@ -178,6 +181,13 @@ provider 추상화(`app/services/auth_providers.py`): `mock`(dev 전용, 크리�
 - **LLM provider 추상화**(`app/services/llm/`): `MockLLMProvider`(규칙 기반, 키 불필요) + `OpenAILLMProvider`(httpx Chat Completions, `proofread`/`proofread_batch`). `LLM_PROVIDER=auto`면 `OPENAI_API_KEY` 유무로 자동 선택. 프롬프트는 `app/services/llm/prompts.py`에 분리. 최신 모델(gpt-5.x)은 `temperature` 커스텀 불가라 payload 에서 생략.
 - **교정 범위**(`PROOFREAD_CATEGORIES`, 기본 `["spelling","spacing"]`): 문서가 길어질수록 GPT 가 "더 자연스럽게" 류의 표현·문맥 지적을 쏟아내 정작 오탈자가 묻히므로 기본을 오탈자·띄어쓰기로 좁혀 뒀다(같은 문서 실측 12건 → 9건, 표현·문법 4건 전부 제거). 프롬프트가 대상 유형·금지 항목·**category enum 을 함께 좁히고**(enum 을 열어 두면 모델이 제외 대상을 남은 카테고리에 욱여넣는다), 그래도 새어 나온 지적은 provider 가 응답에서 걸러 로그에 남긴다. 단 처음 보는 라벨은 버리지 않고 기본 카테고리로 보정한다 — 라벨 오타 때문에 멀쩡한 오탈자 지적을 잃지 않기 위함. 표현 교정까지 받으려면 `.env` 에 4종을 모두 적고 **재시작**.
 - **결과 적재**: `ai_analysis_results`(document/version FK, `analysis_type`, `status`=RUNNING/COMPLETED/FAILED, `provider`, `result` JSONB, `error`) — proofread 외 classify·validate·related 결과도 이 테이블을 공용으로 쓴다.
+- **교정 적용(apply, 2026-08-18 신규)**: finding마다 `id`(위치 기반, `f0`/`f1`.../구버전 레코드는 조회 시 같은 규칙으로 역채움)와 `status`(pending/accepted/rejected)가 붙는다. `PATCH .../findings/{finding_id}`로 하나씩 승인/반려한 뒤 `POST .../apply`를 호출하면 **accepted 상태인 finding 전부**를 원본 파일에 반영해 새 `document_version`을 만든다:
+  - **DOCX/HWPX**: 실제 텍스트 편집. run(`<w:r>`)/HWPX 텍스트노드(`<hp:t>`) 경계를 인식하는 부분 치환(`app/services/correction_service.py`의 `_replace_span_in_nodes`)이라, 교정 구간과 안 겹치는 서식(볼드/색상 등)은 그대로 보존된다. `docx_parser`/`hwpx_parser`가 파싱 때 쓰는 것과 동일한 문단/블록 순회 규칙을 재사용해 `section.order_no`로 원본 위치를 되찾고, 되찾은 문단 텍스트가 분석 시점과 다르면(드리프트) 해당 finding만 skip한다.
+  - **PDF**: 완전 편집이 불가능해 **시각적 패치**로 대체 — 저장해 둔 `bbox`(+ `font_size`/`line_height`) 자리를 `add_redact_annot`/`apply_redactions`로 지우고 교정된 텍스트를 `insert_textbox`로 다시 그려 넣는다.
+  - **TXT/MD**: 서식 구조가 없어 블록(빈 줄 구분) 단위 오프셋 기반 문자열 치환. 여러 섹션을 동시에 고쳐도 오프셋이 밀리지 않도록 원본 좌표 기준으로 한 번에 스플라이스한다.
+  - 새 버전은 기존 `run_parse_task`(parse+chunk)를 그대로 타므로, 재파싱된 섹션/청크에 교정 결과가 자연스럽게 반영된다(섹션/청크를 손으로 patch하지 않음) — 이게 MVP2 임베딩이 오탈자를 인덱싱하지 않게 만드는 핵심 이유.
+  - 표(table) 섹션, bbox/텍스트 드리프트가 있는 finding은 skip되고 `skipped_reasons`로 반환된다. 분석 1건당 **1회만 적용 가능**(`result.applied_version_id`로 가드, 재호출은 `409`). accepted가 0건이거나 전부 매칭 실패, 또는 DOCX/HWPX/PDF/TXT/MD가 아닌 포맷이면 `400`.
+  - `DocumentService.create_version()`이 이 흐름 전용으로 새로 생긴 v2+ 버전 생성 메서드다(`upload_document`는 여전히 v1 + 신규 Document만 담당). 프론트 UI(승인/반려 토글, 적용 버튼)는 아직 없다.
 
 > 참고: 초기의 `POST /api/v1/spell-check`(입력을 그대로 돌려주던 스텁)는 **삭제됐다**(2026-08-16). 소비자가 없었고 실제 교정은 `proofread` 가 담당한다.
 
