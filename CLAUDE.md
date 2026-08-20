@@ -126,9 +126,11 @@ app/
 │   ├── document.py  document_version.py  document_section.py  document_chunk.py
 │   ├── embedding_model.py  chunk_embedding.py   # chunk_embedding.embedding = Vector(1024)
 │   ├── ai_analysis_result.py   # shared AI-result table (proofread/classify/validate/related)
-│   └── activity_log.py     # append-only activity feed (see api-spec.md §2) — FK-less by design
-├── schemas/                # Pydantic request/response — project, folder, auth, document, dashboard, proofread — snake_case (dashboard.py aliases to camelCase on output, see api-spec.md §2)
-├── repositories/           # DB access per aggregate — project_, folder_, user_, document_, activity_, dashboard_, analysis_
+│   ├── activity_log.py     # append-only activity feed (see api-spec.md §2) — FK-less by design
+│   ├── project_member.py   # membership + invite status (pending/active/rejected), see api-spec.md §3
+│   └── notification.py  push_subscription.py   # per-recipient inbox + Web Push endpoints (api-spec.md §9)
+├── schemas/                # Pydantic request/response — project, folder, auth, document, dashboard, proofread, user, notification, push — snake_case (dashboard.py aliases to camelCase on output, see api-spec.md §2)
+├── repositories/           # DB access per aggregate — project_, project_member_, folder_, user_, document_, activity_, dashboard_, analysis_, notification_, push_subscription_
 ├── services/               # business logic + get_*_service() DI factories
 │   ├── project_service.py  folder_service.py  document_service.py
 │   ├── parsing_service.py   # run_parse_task (BackgroundTasks entry): parse → chunk, status transitions
@@ -137,6 +139,9 @@ app/
 │   ├── correction_service.py # apply accepted findings → DOCX/HWPX real edit, PDF visual patch, TXT/MD splice → new version
 │   ├── dashboard_service.py # dashboard summary aggregation (stats/weekly/pipeline)
 │   ├── activity_service.py  # activity_log writer/reader — describe() maps code→label/kind, activity_service_for() for non-request contexts (background jobs, OAuth callback)
+│   ├── notification_service.py # notify() = in-app row + Web Push in one call; best-effort (never breaks the caller)
+│   ├── push_service.py      # VAPID Web Push send/subscribe (pywebpush)
+│   ├── user_service.py      # user search for the member-invite picker
 │   ├── llm/                 # LLMProvider: base, mock_provider, openai_provider, factory(get_llm_provider), prompts
 │   ├── parsing/             # format adapters: base, registry, text/docx/pdf/hwpx_parser, ocr (Tesseract + OpenCV preprocess)
 │   ├── storage.py           # StorageProvider (LocalStorageProvider today; MinIO/S3 later)
@@ -145,7 +150,8 @@ app/
 │   ├── deps.py             # get_current_user (HTTPBearer)
 │   └── v1/
 │       ├── router.py       # aggregates module routers — register new ones here
-│       ├── health.py  auth.py  dashboard.py  projects.py  folders.py  documents.py  proofread.py
+│       ├── health.py  auth.py  dashboard.py  mypage.py  projects.py  folders.py  documents.py  proofread.py
+│       ├── users.py  notifications.py  push.py
 alembic/                     # migrations (run: alembic upgrade head)
 docs/                        # STATUS.md (what's built), ROADMAP.md (phases+backlog), DESIGN.md (design), api-spec.md (contract), API_REFERENCE.md (generated per-endpoint ref)
 ```

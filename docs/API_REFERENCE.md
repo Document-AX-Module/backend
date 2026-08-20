@@ -6,6 +6,8 @@
 >
 > **✅ 구현됨** 섹션의 스키마는 실제 `/openapi.json`(2026-08-19 생성 서버 기준)에서 그대로 뽑아 정확성을 맞췄다 — 코드가 바뀌면 이 문서도 갱신 필요.
 > **⏳ 예정** 섹션은 아직 스키마가 확정되지 않은 설계 초안이다.
+>
+> **갱신 지연 주의(2026-08-20)**: 이후 추가된 것 중 멤버/초대(§4)와 알림·push(§11)는 손으로 반영했지만, `GET /mypage/summary`, `GET /documents/search`, `GET /documents/{id}/diff`, `PATCH /documents/{id}/move`, `PATCH /projects/{id}/visibility`, `PATCH /folders/{id}/reorder`는 **아직 이 문서에 없다** — 그 계약은 [api-spec.md](api-spec.md)와 실행 중인 서버의 `/docs`를 본다.
 
 ## 공통 규약
 
@@ -211,8 +213,80 @@ Google OAuth + 백엔드 발급 JWT. access 토큰은 `Authorization: Bearer`, r
 | name | string |
 | description | string \| null |
 | created_by | string \| null |
+| owner_id | integer \| null |
+| visibility | `"private" \| "invite" \| "public"` |
 | created_at | string(datetime) |
 | updated_at | string(datetime) |
+
+### `GET /api/v1/users/search` — 사용자 검색 (멤버 초대용)
+**역할**: 초대할 사람을 목록에서 골라 클릭할 수 있게 가입된 사용자를 이름/이메일로 찾는다. 인증만 필요(사내 플랫폼 전제).
+
+**Parameters**
+| name | in | type | 설명 |
+|---|---|---|---|
+| q | query | string, **min 2** | 이름 또는 이메일 일부. 대소문자 무시, 부분일치. 1자면 `422` |
+| limit | query | integer 1..50, 기본 20 | 최대 결과 수 |
+| exclude_project_id | query | integer? | 그 프로젝트의 `active`+`pending` 사용자를 결과에서 제외(재초대 가능한 `rejected`는 남는다) |
+
+**Response `200`** → `UserSearchResult[]`: `{ id: integer, email: string, name: string | null }` — 앞부분 일치가 위로 정렬, 비활성 사용자 제외.
+**`403`**: `exclude_project_id` 프로젝트에 접근 권한 없음(멤버 목록 간접 유출 차단). **`404`**: 그 프로젝트가 없음.
+
+### `GET /api/v1/projects/{project_id}/members` — 멤버 목록
+**역할**: 정식 멤버(`active`)뿐 아니라 수락 대기(`pending`)·거절(`rejected`)까지 함께 반환 — 프론트가 `status`로 뱃지를 구분해 그린다.
+
+**Response `200`** → `ProjectMemberRead[]`. **`403`**: 접근 권한 없음. **`404`**: 프로젝트 없음.
+
+### `POST /api/v1/projects/{project_id}/members` — 멤버 초대 (owner 전용)
+**역할**: **즉시 멤버가 되지 않는다** — `status='pending'`인 초대장을 만들고 상대에게 알림을 보낸다. 상대가 `accept`해야 접근 권한이 생긴다. 거절했던 사용자를 다시 초대하면 같은 행이 `pending`으로 되돌아간다.
+
+**Request Body** → `ProjectMemberInvite`: `{ user_id?: integer, email?: string }` — **정확히 하나만** 보낸다(둘 다 또는 둘 다 없으면 `422`). `user_id`는 `/users/search` 결과에서 고른 값.
+**Response `201`** → `ProjectMemberRead` (`status="pending"`).
+**`400`**: 해당 사용자 없음 / 이미 멤버 / 이미 초대 대기 중. **`403`**: owner(또는 admin) 아님. **`404`**: 프로젝트 없음.
+
+### `DELETE /api/v1/projects/{project_id}/members/{user_id}` — 멤버 제거 / 초대 취소 (owner 전용)
+**역할**: 정식 멤버 제거와 **수락 전 초대 취소를 겸한다**(행 삭제 → 재초대 가능). 정식 멤버였던 경우에만 당사자에게 알림이 간다. 프론트는 삭제 전 `status`로 버튼 문구("초대 취소" vs "멤버 제거")를 정한다.
+
+**Response**: `204`. **`403`**: owner 아님, 또는 owner 본인 제거 시도. **`404`**: 프로젝트 없음 또는 멤버/초대 대상이 아님.
+
+### `GET /api/v1/projects/invitations` — 내가 받은 수락 대기 초대 목록
+**역할**: 수락 전에는 접근 권한이 없어 `GET /projects`·`GET /projects/{id}`에 나오지 않으므로, 초대받은 프로젝트는 이 엔드포인트로 확인한다. 최신순.
+
+**Response `200`** → `ProjectInvitationRead[]`
+
+### `POST /api/v1/projects/{project_id}/invitation/accept` — 초대 수락 (초대받은 본인)
+**역할**: 멤버 상태가 `active`가 되어 그때부터 프로젝트에 접근할 수 있다. 아직 멤버가 아니므로 프로젝트 접근 권한 검사 대신 "대기 중 초대가 있는가"로 검사한다. 초대한 사람에게 수락 알림이 간다.
+
+**Response `200`** → `ProjectRead` (바로 프로젝트로 진입할 수 있게 프로젝트를 돌려준다).
+**`400`**: 대기 중인 초대가 없음(이미 응답했거나 초대받지 않음). **`404`**: 프로젝트 없음.
+
+### `POST /api/v1/projects/{project_id}/invitation/decline` — 초대 거절 (초대받은 본인)
+**역할**: 행을 지우지 않고 `status='rejected'`로 남겨 owner가 "거절함"을 볼 수 있게 한다. owner가 다시 초대하면 `pending`으로 되돌아간다. 초대한 사람에게 거절 알림이 간다.
+
+**Response**: `204`. **`400`**: 대기 중인 초대가 없음. **`404`**: 프로젝트 없음.
+
+**`ProjectMemberRead`**
+| field | type | 설명 |
+|---|---|---|
+| user_id | integer | |
+| email | string | |
+| name | string \| null | |
+| role | `"owner" \| "member"` | |
+| status | `"pending" \| "active" \| "rejected"` | `active`만 실제 접근 권한이 있다 |
+| invited_by | integer \| null | 초대한 사용자 id |
+| created_at | string(datetime) | 초대된 시각 |
+| responded_at | string(datetime) \| null | 수락·거절 시각, `pending`이면 null |
+
+**`ProjectInvitationRead`**
+| field | type |
+|---|---|
+| project_id | integer |
+| project_name | string |
+| project_description | string \| null |
+| visibility | `"private" \| "invite" \| "public"` |
+| invited_by | integer \| null |
+| invited_by_name | string \| null |
+| invited_by_email | string \| null |
+| invited_at | string(datetime) |
 
 ### `GET /api/v1/projects/{project_id}/folders` — 폴더 목록(트리 구성용)
 **역할**: 해당 프로젝트의 모든 폴더를 **평탄한 배열**로 반환 — 트리 조립은 프론트가 `parent_id`로 한다.
@@ -474,12 +548,60 @@ RAG Retrieval Engine을 재사용해 문서 기반 문제/문제집을 생성한
 
 ---
 
-## 11. 알림 (`/api/v1/notifications`) — ⏳ 2026-08-19 로드맵 백로그, 스키마 초안
+## 11. 알림 (`/api/v1/notifications`, `/api/v1/push`) — ✅ 2026-08-20 구현
 
-| Method | Endpoint | 역할 |
+전달 채널은 **인앱(`notifications` 테이블) + Web Push(구독한 브라우저)** 둘 다이며 서버가 한 번에 처리한다. 발생원: 프로젝트 초대·수락·거절·멤버 제거, 오탈자 검증 완료·실패.
+
+### `GET /api/v1/notifications` — 내 알림 목록
+**Parameters**
+| name | in | type | 설명 |
+|---|---|---|---|
+| only_unread | query | boolean, 기본 false | true면 안 읽은 것만 |
+| limit | query | integer 1..100, 기본 20 | |
+| offset | query | integer ≥0, 기본 0 | 페이지네이션 |
+
+**Response `200`** → `{ items: NotificationRead[], unread: integer }` — `unread`는 `only_unread`/`limit`과 무관한 **전체 미읽음 수**라 벨 아이콘 뱃지에 그대로 쓴다. `items`는 최신순.
+
+### `GET /api/v1/notifications/unread-count` — 안 읽은 알림 수
+**역할**: 목록 없이 뱃지 숫자만 폴링할 때.
+**Response `200`** → `{ unread: integer }`
+
+### `POST /api/v1/notifications/{notification_id}/read` — 알림 하나 읽음 처리
+**역할**: 멱등 — 이미 읽은 알림에 다시 호출해도 `read_at`은 처음 읽은 시각을 유지한다.
+**Response `200`** → `NotificationRead`. **`404`**: 내 알림 중에 그 id가 없음(남의 알림도 존재를 감추려 403이 아니라 404).
+
+### `POST /api/v1/notifications/read-all` — 전체 읽음 처리
+**Response `200`** → `{ unread: 0 }`
+
+### `GET /api/v1/push/public-key` — VAPID 공개키
+**역할**: 브라우저 `PushManager.subscribe()`의 `applicationServerKey`에 쓸 공개키. 서버에 VAPID 키가 설정돼 있지 않으면 빈 문자열(그 경우 push는 조용히 건너뛰고 인앱 알림만 쌓인다).
+**Response `200`** → `{ public_key: string }`
+
+### `POST /api/v1/push/subscribe` — 브라우저 push 구독 등록
+**Request Body**: `{ endpoint: string, keys: { p256dh: string, auth: string } }` — 같은 `endpoint`로 재구독하면 키를 갱신(upsert).
+**Response**: `204`
+
+### `DELETE /api/v1/push/subscribe` — 구독 해제
+**Request Body**: `{ endpoint: string }`
+**Response**: `204`
+
+**Web Push payload** (서비스워커가 `push` 이벤트에서 받는 JSON — REST 응답이 아님)
+```json
+{ "title": "프로젝트 초대", "body": "홍길동님이 '신규 규정' 프로젝트에 초대했습니다.", "url": "/projects/12", "type": "project.invite" }
+```
+4개 키 고정. `type`은 `NotificationRead.type`과 같은 값이라 `showNotification`의 `tag`/아이콘 분기에 쓸 수 있다.
+
+**`NotificationRead`**
+| field | type | 설명 |
 |---|---|---|
-| GET | `/api/v1/notifications?unread_only=` | 내 알림 목록 |
-| PATCH | `/api/v1/notifications/{id}/read` | 읽음 처리 |
+| id | integer | |
+| type | string | `project.invite` \| `project.invite_accepted` \| `project.invite_declined` \| `project.member_removed` \| `analysis.complete` \| `analysis.fail` |
+| title | string | 알림 제목 |
+| body | string \| null | 본문 |
+| url | string \| null | 클릭 시 이동할 **프론트** 경로 (예: `/projects/12`, `/documents/34`) |
+| meta | object \| null | 종류별 부가 정보(`project_id`, `document_id`, `analysis_id` 등) |
+| read_at | string(datetime) \| null | null이면 안 읽음 |
+| created_at | string(datetime) | |
 
 ---
 

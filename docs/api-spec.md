@@ -45,8 +45,8 @@ provider 추상화(`app/services/auth_providers.py`): `mock`(dev 전용, 크리�
 | GET | `/api/v1/auth/me` | 현재 사용자(`id, email, name, role`), Bearer 필요 | ✅ |
 
 - 로그인 후 프론트는 콜백 착지 시 `POST /auth/token/refresh`(쿠키 사용)로 access 토큰을 메모리에 확보 → 이후 `Authorization: Bearer`.
-- 보호 라우트는 `app/api/deps.py`의 `get_current_user` 의존성 사용. `role` 기반 게이팅(관리자 전용 Embedding Lab 등)은 **아직 없다** — 첫 관리자 전용 라우트가 생길 때 의존성을 추가한다.
-- **TODO**: `projects.created_by` 등 임시 String → `users` FK 승격, 프로젝트 `members`(멤버십 테이블). SSO(OIDC/SAML)는 IdP 확정 후.
+- 보호 라우트는 `app/api/deps.py`의 `get_current_user` 의존성 사용. **프로젝트 단위 접근 제어는 2026-08-20 구현됨** — `require_project_access`/`require_project_owner`(및 documents.py/folders.py/proofread.py의 동명 document/version/folder 버전)가 `projects.visibility`(private/invite/public) + `project_members`를 확인한다(DESIGN.md §28). 다만 이건 "이 프로젝트에 접근 가능한가"이지 "이 사용자가 관리자인가"는 아니다 — `role="admin"`은 접근 체크를 우회하지만, 그 자체를 **요구**하는 라우트(관리자 전용 Embedding Lab 등)는 아직 없다.
+- **TODO**: `projects.created_by`/`documents.created_by` 등 임시 String → `users` FK 승격(`projects.owner_id`는 2026-08-20에 실제 FK로 추가됨, `created_by` 문자열 자체는 남아있음). SSO(OIDC/SAML)는 IdP 확정 후.
 - refresh 토큰은 현재 **stateless JWT**(logout=쿠키 삭제) — 서버측 강제 폐기가 필요하면 refresh jti denylist/테이블 추가.
 
 ---
@@ -61,6 +61,7 @@ provider 추상화(`app/services/auth_providers.py`): `mock`(dev 전용, 크리�
 
 - **응답만 camelCase.** 프론트가 먼저 확정해 둔 계약(`frontend/src/lib/types.ts` 의 `DashboardSummary`/`ActivityItem`)에 맞추기 위해 이 섹션의 스키마만 `alias_generator=to_camel` 로 직렬화한다(`ragToday`, `weeklyProcessing`, `documentTypes`). 나머지 API 는 그대로 snake_case.
 - `project_id` 는 선택 — 없으면 전체 집계, 주면 해당 프로젝트로 스코프. **없는 id 면 빈 결과가 아니라 404** 다. `/dashboard/summary`·`/activity`·`/documents/recent` 세 엔드포인트가 동일하게 동작하므로, 프로젝트 스코프 대시보드에서 `Promise.all` 로 묶어도 일부만 404 가 나는 일은 없다(2026-08-16 통일 — 그전엔 summary 만 200 빈 집계였다). 조용히 빈 결과를 주면 프론트가 오타 난 id 를 "데이터 없음"으로 오인하기 때문.
+- **접근 제어(2026-08-20, DESIGN.md §28)**: `project_id`를 지정했는데 접근 권한이 없으면(3절 규칙과 동일) `403`. `project_id`를 생략하면 404/403 대신 조용히 **내가 접근 가능한 프로젝트로만 좁혀서** 집계·필터링한다 — `summary`의 전체 집계, `activity`의 피드 둘 다. 단 `activity`에서 `project_id`가 없는 로그(로그인 등)는 이 필터와 무관하게 그대로 보인다.
 - `pipeline` 은 카운트가 0 이어도 8개 상태(`UPLOADED`~`FAILED`)를 항상 고정 순서로 내려준다. 집계 기준은 **현재 버전의 `document_versions.processing_status`**. `stats.processing` 은 `PARSING`/`CHUNKING`/`EMBEDDING` 만 센다.
 - `weeklyProcessing` 은 **오늘 포함 최근 7일**의 업로드 건수를 과거 → 오늘 순으로 담은 길이 7 배열(요일 고정이 아니므로 라벨은 프론트가 계산). 날짜 경계는 UTC.
 - `activity.at` 은 ISO8601 문자열 — "10분 전" 같은 상대시간 포맷은 프론트 담당.
@@ -88,15 +89,21 @@ provider 추상화(`app/services/auth_providers.py`): `mock`(dev 전용, 크리�
 
 2026-08-16 도입. **소급 기록이 불가능하므로 그 이전 활동은 없다.**
 
-기록하는 액션(12종) — DB 에는 이 **코드**를 저장하고, 표시 문구·배지 `kind` 는 읽을 때 `activity_service.describe()` 가 붙인다(문구를 바꿔도 과거 로그가 안 깨지게):
+기록하는 액션(17종, 2026-08-20 기준) — DB 에는 이 **코드**를 저장하고, 표시 문구·배지 `kind` 는 읽을 때 `activity_service.describe()` 가 붙인다(문구를 바꿔도 과거 로그가 안 깨지게):
 
 | 코드 | 문구 | kind |
 |---|---|---|
 | `auth.login` | 로그인 | 로그인 |
 | `project.create` / `.update` / `.delete` | 프로젝트 생성/수정/삭제 | 프로젝트 · 프로젝트 · 삭제 |
-| `folder.create` / `.update` / `.delete` | 폴더 생성/수정·이동/삭제 | 폴더 · 폴더 · 삭제 |
+| `project.visibility_change` | 프로젝트 가시성 변경 (2026-08-20) | 프로젝트 |
+| `project.member_invite` / `.member_remove` | 멤버 초대/제거 (2026-08-20) | 프로젝트 · 프로젝트 |
+| `folder.create` / `.update` / `.delete` | 폴더 생성/수정·이동·순서변경/삭제 | 폴더 · 폴더 · 삭제 |
 | `document.upload` / `.delete` | 문서 업로드/삭제 | 업로드 · 삭제 |
+| `document.move` / `.folder_change` | 문서 프로젝트간 이동/폴더변경 (2026-08-20) | 문서 · 문서 |
 | `analysis.start` / `.complete` / `.fail` | (모듈명) 시작/완료/실패 | 오타 · 규정 · 분류 · 추천 |
+
+- `folder.update` 는 이름 변경/부모 이동뿐 아니라 `PATCH /folders/{id}/reorder`(순서 변경)도 같은 코드로 기록된다(`meta.reordered=true`로 구분).
+- `document.move` 는 프로젝트가 실제로 바뀐 경우, `document.folder_change` 는 같은 프로젝트 안에서 `folder_id`만 바뀐 경우 — 둘 다 `PATCH /documents/{doc_id}/move` 하나가 상황에 따라 나눠 기록한다.
 
 **설계 원칙:**
 
@@ -112,27 +119,42 @@ provider 추상화(`app/services/auth_providers.py`): `mock`(dev 전용, 크리�
 
 | Method | Endpoint | 용도 | 상태 |
 |---|---|---|---|
-| GET | `/api/v1/projects` | 목록(+폴더수/문서수/READY수/멤버/updated_at) | 🟡 기본 CRUD는 됨, **집계·members 필드 미구현** |
-| POST | `/api/v1/projects` | 생성 | ✅ |
+| GET | `/api/v1/projects` | 목록(내가 접근 가능한 것만: public 전체 + 내 invite + 내 private) | 🟡 기본 CRUD·접근제어는 됨, **폴더수/문서수/READY수 집계 필드 미구현** |
+| POST | `/api/v1/projects` | 생성(`visibility` 생략 시 기본 `public`) | ✅ |
 | GET | `/api/v1/projects/{project_id}` | 상세 | ✅ |
-| PATCH | `/api/v1/projects/{project_id}` | 부분 수정(`exclude_unset`) | ✅ |
-| DELETE | `/api/v1/projects/{project_id}` | 삭제(204) | ✅ |
-| GET | `/api/v1/projects/{project_id}/members` | 멤버 | ⏳ (멤버십 테이블 미구현) |
+| PATCH | `/api/v1/projects/{project_id}` | 이름/설명 부분 수정(`exclude_unset`), 멤버라면 누구나 | ✅ |
+| PATCH | `/api/v1/projects/{project_id}/visibility` | private/invite/public 전환, **owner 전용** | ✅ (2026-08-20) |
+| DELETE | `/api/v1/projects/{project_id}` | 삭제(204), **owner 전용** | ✅ |
+| GET | `/api/v1/projects/{project_id}/members` | 멤버 목록(`status`로 active/pending/rejected 구분) | ✅ (2026-08-20) |
+| POST | `/api/v1/projects/{project_id}/members` | `user_id` 또는 `email`로 멤버 **초대**(status=`pending`), **owner 전용** | ✅ (2026-08-20) |
+| DELETE | `/api/v1/projects/{project_id}/members/{user_id}` | 멤버 제거 **겸 초대 취소**, **owner 전용**(owner 본인은 제거 불가) | ✅ (2026-08-20) |
+| GET | `/api/v1/projects/invitations` | 내가 받은 수락 대기 초대 목록 | ✅ (2026-08-20) |
+| POST | `/api/v1/projects/{project_id}/invitation/accept` | 초대 수락(→ active), 응답은 `ProjectRead` | ✅ (2026-08-20) |
+| POST | `/api/v1/projects/{project_id}/invitation/decline` | 초대 거절(→ rejected, 204) | ✅ (2026-08-20) |
+| GET | `/api/v1/users/search?q=&limit=&exclude_project_id=` | 사용자 이름/이메일 부분일치 검색(초대 대상 고르기) | ✅ (2026-08-20) |
 | GET | `/api/v1/projects/{project_id}/folders` | 폴더 트리(project별 목록) | ✅ |
 | POST | `/api/v1/projects/{project_id}/folders` | 폴더 생성(parent_id로 트리) | ✅ |
 | PATCH | `/api/v1/folders/{folder_id}` | 폴더 수정/이동(순환 방지) | ✅ |
+| PATCH | `/api/v1/folders/{folder_id}/reorder` | 폴더 순서 변경(같은 부모 내 target_index로, parent_id 지정 시 이동+순서 동시 처리) | ✅ (2026-08-20) |
 | DELETE | `/api/v1/folders/{folder_id}` | 폴더 삭제(204) | ✅ |
 
 > - **인증**: Project·Folder의 모든 라우트는 `get_current_user`(Bearer) 필수. 무토큰 시 차단.
-> - `created_by`는 클라이언트가 지정하지 않고 **서버가 로그인 사용자 id로 채운다**(임시 String → 향후 users FK).
-> - 현재 `ProjectRead` = `id, name, description, created_by, created_at, updated_at`. 목록 뷰의 집계 필드(폴더수/문서수/READY수/멤버)는 별도 `ProjectListItem` 스키마로 추가 예정.
+> - **접근 제어(2026-08-20, DESIGN.md §28)**: `visibility=public`(기본값, 기존 동작과 동일 — 인증만 되면 조회/쓰기 다 가능)이 아니면 `owner`거나 `project_members`에 **`status='active'`로** 속해야(`invite`일 때만) 통과. `private`는 owner 전용(멤버로 등록돼 있어도 `invite`로 전환 전엔 통과 안 됨). 위반 시 403. Folder 라우트는 `folder_id` → project 를 거슬러 올라가 같은 규칙을 적용.
+> - **초대 수락 흐름(2026-08-20 신규)**: `POST .../members`는 이제 즉시 멤버를 만들지 않고 `project_members.status='pending'`인 **초대장**만 만든다. 수락 전에는 접근 권한이 없어 `GET /projects`·`GET /projects/{id}`에 나오지 않으므로, 초대받은 사람은 `GET /projects/invitations`로 확인하고 `accept`(→`active`, 이때부터 접근 가능) 또는 `decline`(→`rejected`)한다. 거절해도 행은 남아 owner가 "거절함"을 보고 **재초대(같은 행이 다시 pending)** 할 수 있다. 수락 전 취소는 `DELETE .../members/{user_id}`(행 삭제) — 정식 멤버 제거와 같은 엔드포인트고, 응답만으로는 구분되지 않으니 프론트는 삭제 전 `status`로 문구를 정한다. 초대/수락/거절/제거는 모두 상대에게 알림(9절)을 보낸다.
+> - `ProjectMemberRead` = `user_id, email, name, role, status, invited_by, created_at(=초대 시각), responded_at(수락·거절 시각, pending이면 null)`. `ProjectInvitationRead` = `project_id, project_name, project_description, visibility, invited_by, invited_by_name, invited_by_email, invited_at`.
+> - **`GET /users/search`**: 인증만 필요(누구나 사용자를 찾을 수 있다 — 사내 플랫폼 전제). `q`는 이름/이메일 부분일치, 대소문자 무시, **최소 2자**(1자면 422), 앞부분 일치가 위로 정렬. 비활성(`is_active=false`) 사용자는 제외. 응답은 `id, email, name` 뿐(provider/role 등 미노출). `exclude_project_id`를 주면 그 프로젝트의 `active`+`pending` 사용자를 결과에서 빼며(재초대 가능한 `rejected`는 남긴다), 멤버 목록이 간접 유출되지 않도록 **그 프로젝트에 접근 가능한 사람만** 이 필터를 쓸 수 있다(아니면 403/404).
+> - `created_by`는 클라이언트가 지정하지 않고 **서버가 로그인 사용자 id로 채운다**(임시 String → 향후 users FK 승격 예정). `owner_id`는 2026-08-20부터 실제 FK.
+> - 현재 `ProjectRead` = `id, name, description, created_by, owner_id, visibility, created_at, updated_at`. 목록 뷰의 집계 필드(폴더수/문서수/READY수)는 별도 `ProjectListItem` 스키마로 추가 예정.
 > - Folder 수정 시 부모를 자기 자손 밑으로 옮기면 `400`(순환 방지), 다른 프로젝트 부모도 `400`.
+> - **폴더 순서(`rank`, 2026-08-20 신규)**: `folders.rank`(정수, 형제 사이 기본 간격 1000)로 정렬. 생성 시 해당 parent 안 최댓값+1000으로 끝에 붙는다. `reorder`는 `target_index`(0-based, 범위를 벗어나면 clamp)로 옮긴 뒤 영향받은 형제 전체를 0부터 1000 간격으로 재부여하고, `parent_id`를 함께 주면 부모 이동(순환/타 프로젝트 검사 동일 적용)까지 한 번에 처리한다. 응답은 새 부모 기준 형제 목록 전체(`FolderRead[]`, `rank` 포함). `FolderRead`에 `rank` 필드가 추가됐다.
 
 ---
 
 ## 4. 문서 (`/api/v1/...`)
 
 업로드는 `202 Accepted` + 백그라운드 처리(파싱→청킹), 상태 폴링. 전 라우트 인증 필수. (Phase 5·6·7 완료)
+
+- **접근 제어(2026-08-20, DESIGN.md §28)**: 이 절의 모든 라우트가 문서/버전 → 소속 프로젝트를 거슬러 올라가 3절과 동일한 규칙(`visibility` + `project_members`)을 적용한다 — 위반 시 `403`. `project_id`가 경로에 없는 라우트(`{doc_id}`, `{version_id}` 기준)는 `check_document_access`/`check_version_access` 의존성이 대상을 먼저 조회해 소속 프로젝트로 접근을 확인한다. `/documents/recent`·`/documents/search`는 `project_id`를 생략하면 조회 자체가 아예 내가 접근 가능한 프로젝트로 좁혀진다(403이 아니라 결과에서 제외).
 
 | Method | Endpoint | 용도 | 상태 |
 |---|---|---|---|
@@ -143,6 +165,7 @@ provider 추상화(`app/services/auth_providers.py`): `mock`(dev 전용, 크리�
 | POST | `/api/v1/projects/{project_id}/documents` (multipart) | 업로드 → 202 `{document, version}` | ✅ |
 | GET | `/api/v1/documents/{doc_id}` | 상세(+author+current_version) | ✅ |
 | PATCH | `/api/v1/documents/{doc_id}` | 이름/폴더/타입 변경(예: RULE 지정) | ⏳ |
+| PATCH | `/api/v1/documents/{doc_id}/move` | 다른 프로젝트로 이동(`project_id`+선택 `folder_id`). 원본·대상 프로젝트 접근권한 둘 다 필요 | ✅ (2026-08-20) |
 | DELETE | `/api/v1/documents/{doc_id}` | 삭제(파일 정리 포함, 204) | ✅ |
 | GET | `/api/v1/documents/{doc_id}/download` | 원본 다운로드 | ✅ |
 | GET | `/api/v1/documents/{doc_id}/versions` | 버전 목록 | ✅ |
@@ -179,6 +202,7 @@ provider 추상화(`app/services/auth_providers.py`): `mock`(dev 전용, 크리�
 | POST | `/api/v1/documents/{doc_id}/validate` | 규정 검증(RULE 검색 → GPT) | ⏳ (MVP5) |
 | POST | `/api/v1/documents/{doc_id}/related` | 관련 문서 추천(vector search) | ⏳ (MVP3) |
 
+- **접근 제어(2026-08-20)**: 이 절의 모든 라우트도 4절과 동일하게 `document_id` → 소속 프로젝트로 접근을 확인한다(`proofread.py`의 `check_document_access`) — 위반 시 `403`.
 - **문서비교는 여기 없다**: 처음엔 이 표에 있었지만, 검색(임베딩)도 GPT 판단도 필요 없는 "이미 정해진 두 버전 비교"라 4절 `/documents/{doc_id}/diff`(동기, `ai_analysis_results` 미사용)로 옮겼다. `classify`/`validate`/`related`는 반대로 셋 다 DESIGN.md상 "RAG Retrieval 재사용" 구조라 `chunk_embeddings`/`embedding_models`를 채우는 임베딩 파이프라인(MVP2, 아직 스키마만 있고 완전히 비어 있음)이 선행돼야 실제 동작한다 — 지금은 스텁만 있는 상태.
 - **proofread 흐름(202 + 폴링)**: `POST /proofread` 는 검증 후 `RUNNING` 레코드를 만들고 **즉시 `202`** 반환 → BackgroundTasks 가 배치 교정 수행 → 프론트는 `GET .../analyses/{analysis_id}` 로 `status`(RUNNING→COMPLETED/FAILED)를 폴링. 파싱 전(`UPLOADED/PARSING`)이면 `409`, 문서 없음 `404`.
 - **배치 호출**: 섹션을 글자수/개수 상한(`proofread_batch_max_chars`·`_max_sections`)으로 묶어 **한 프롬프트에 여러 섹션**을 보낸다(`[번호]` 마커 → 결과 index 로 되매핑). 섹션당 1회 순차 호출 대비 호출 수·시간·비용 대폭 절감(11섹션 기준 순차 17s → 배치 1회 ~7.5s). 각 finding 은 `original→suggestion`·`reason`·`category` + `section_id`·`page_start/end`.
@@ -245,14 +269,27 @@ RAG Retrieval Engine을 재사용해 문서 기반 문제/문제집을 생성한
 
 ---
 
-## 9. 알림 — 2026-08-19 로드맵 백로그 (⏳, 엔드포인트 미확정)
+## 9. 알림 (`/api/v1/notifications`) — 2026-08-20 구현
 
-`activity_logs`(2절 참고)가 이미 이벤트 소스 역할을 상당 부분 할 수 있어, 별도 이벤트 파이프라인보다는 그 위에 사용자별 "읽음/구독" 레이어를 얹는 방향으로 검토 중. 전달 채널(인앱만 vs 이메일/웹푸시)은 미정.
+**결론**: `activity_logs` 위에 읽음 레이어를 얹는 대신 **수신자별 `notifications` 테이블을 따로** 뒀다 — `activity_logs`는 "프로젝트에서 무슨 일이 있었나"(감사 로그, 프로젝트 스코프)이고 알림은 "이 사용자가 봐야 할 것"(수신자 스코프 + 읽음 상태)이라 조회 축이 다르고, 활동 한 건이 여러 수신자에게 가거나(초대) 아무에게도 안 가는 경우가 섞이기 때문. 전달 채널은 **인앱(이 테이블) + Web Push(구독한 브라우저에만)** 둘 다이며 `NotificationService.notify()` 한 곳에서 동시에 처리한다(이메일은 미도입).
 
 | Method | Endpoint | 결과 | 상태 |
 |---|---|---|---|
-| GET | `/api/v1/notifications?unread_only=` | 내 알림 목록 | ⏳ |
-| PATCH | `/api/v1/notifications/{id}/read` | 읽음 처리 | ⏳ |
+| GET | `/api/v1/notifications?only_unread=&limit=&offset=` | 내 알림 목록(최신순) + 전체 미읽음 수 | ✅ (2026-08-20) |
+| GET | `/api/v1/notifications/unread-count` | 미읽음 수만(뱃지 폴링용) | ✅ (2026-08-20) |
+| POST | `/api/v1/notifications/{id}/read` | 읽음 처리(멱등), 응답은 갱신된 알림 | ✅ (2026-08-20) |
+| POST | `/api/v1/notifications/read-all` | 전체 읽음 처리 | ✅ (2026-08-20) |
+| GET | `/api/v1/push/public-key` | VAPID 공개키(브라우저 `PushManager.subscribe()`용) | ✅ |
+| POST | `/api/v1/push/subscribe` | 브라우저 push 구독 등록(같은 endpoint 재구독은 upsert) | ✅ |
+| DELETE | `/api/v1/push/subscribe` | 구독 해제 | ✅ |
+
+- `NotificationRead` = `id, type, title, body, url, meta, read_at, created_at`. `read_at=null`이면 안 읽음. `url`은 클릭 시 이동할 **프론트** 경로(예: `/projects/12`, `/documents/34`), `meta`는 종류별 부가 정보(`project_id`/`document_id`/`analysis_id` 등).
+- 목록 응답은 `{items, unread}` — `unread`는 `only_unread`/`limit`과 무관한 전체 미읽음 수라 벨 아이콘 뱃지에 그대로 쓴다.
+- 남의 알림 id로 읽음 처리하면 존재를 감추기 위해 **403이 아니라 404**.
+- `type` 값(계약): `project.invite`, `project.invite_accepted`, `project.invite_declined`, `project.member_removed`, `analysis.complete`, `analysis.fail`. 초대 취소는 알림을 보내지 않는다(수락 전이므로).
+- **Web Push payload(서비스워커 계약)**: `{"title": string, "body": string, "url": string|null, "type": string|null}` 4개 키 고정. `type`은 `NotificationRead.type`과 같은 값이라 서비스워커가 `showNotification(..., {tag})`으로 같은 종류를 묶거나 아이콘을 바꾸는 데 쓸 수 있다. VAPID 키가 서버에 없으면 push는 조용히 건너뛰고 인앱 알림만 쌓인다(`GET /push/public-key`가 빈 문자열을 돌려주므로 프론트는 토글을 비활성화할 수 있다).
+- 알림 생성은 **본 업무를 깨뜨리지 않는다** — 저장/푸시 실패는 로깅만 하고 초대·분석 자체는 성공한다(`ActivityService.record()`와 같은 원칙).
+- 기존 오탈자 검증 완료/실패 push도 이제 이 서비스를 거쳐 **알림함에 기록이 남는다**(이전에는 push만 쏘고 흔적이 없었음).
 
 ---
 

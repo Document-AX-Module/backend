@@ -427,7 +427,28 @@ User → Next.js → FastAPI
 - OneDrive/SharePoint/Teams 파일 접근(Teams 파일 탭 = SharePoint 문서 라이브러리). OAuth 앱 등록 → `delta` 쿼리로 변경분만 → **webhook(subscription)**으로 변경 푸시.
 - 파일 + 메타데이터 + 버전이력 + 권한까지 확보. 헤드리스로 안정적.
 
-**아키텍처 반영**: 임베딩 Provider 추상화와 같은 패턴으로 `DocumentSource`(또는 `Connector`) 인터페이스를 두고 `ManualUpload / OneDriveSource(Graph)` 로 확장. 결정할 것: 공유 계정 1개로 접근할지 vs 사용자별 OAuth 로 권한 매핑할지.
+**아키텍처 반영**: 임베딩 Provider 추상화와 같은 패턴으로 `DocumentSource`(또는 `Connector`) 인터페이스를 두고 `ManualUpload / OneDriveSource(Graph)` 로 확장.
+
+### 26-1. 개인/공유 스코프 저장 전략 (2026-08-20 확정, §28로 대체됨)
+
+> **Superseded**: 아래는 "문서/폴더에 직접 owner_id+visibility를 다는" 안이었으나, 같은 날 논의를 이어가며 **프로젝트 단위**로 가시성을 두는 쪽으로 정리했다(§28). document/folder는 project를 따라가므로 스키마 변경이 필요 없어져 이 절의 스키마 변경분은 적용하지 않는다. Storage source(서버 볼륨/OneDrive) 논의 자체는 여전히 유효하니 방식 A/B 설명은 그대로 둔다.
+
+> "공유 계정 1개 vs 사용자별 OAuth" 미결 사항을 해소. 문서 성격에 따라 세 갈래로 소스를 나눈다 — **저장소가 3개로 쪼개지는 게 아니라, 정본(Document Core)은 하나이고 유입 경로(source)가 3가지**라는 게 핵심.
+
+| 문서 분류 | 소스 | 인증 방식 |
+|---|---|---|
+| 회사 내규/공식 문서 | 서버 볼륨 (`LocalStorageProvider`, 지금 그대로) | 없음(서버가 이미 소유) |
+| 팀 공유 폴더 | OneDrive/SharePoint 공유 드라이브 (Graph `/sites/{id}/drive`) | 관리자 1회 앱 동의(`Sites.Read.All`) — 전 사용자 재동의 불필요 |
+| 개인 폴더 | 사용자 개인 OneDrive (Graph `/me/drive`) | 사용자별 위임 OAuth(`Files.Read`) — "OneDrive 연결" 버튼으로 본인이 직접 동의 |
+
+**Fallback(중요): OneDrive 미동의·미사용 사용자는 서버 볼륨에 개인 스코프로 저장한다.** 즉 OneDrive 연동은 선택적 add-on이고, 서버 볼륨이 항상 동작하는 baseline이다 — "개인 폴더"라는 개념 자체가 OneDrive 유무에 의존하면 안 되고, 아래 스키마 변경으로 서버 볼륨 위에서도 항상 성립해야 한다.
+
+**필요한 스키마 변경** (§17 `documents`/`folders`에 반영 필요, 아직 미구현):
+- `documents`, `folders`에 `owner_id`(FK `users.id`, nullable)와 `visibility`(`private` | `shared`, 기본값 `shared`) 컬럼 추가.
+- `visibility='private'`인 문서/폴더는 `owner_id`와 일치하는 사용자만 조회 가능하도록 API 레이어(리포지토리 쿼리)에서 필터. Project 자체는 지금처럼 팀 공용 스코프로 유지.
+- OneDrive 커넥터가 실제로 붙는 시점엔 `document_versions`(또는 `documents`)에 `storage_source`(`local` | `onedrive_personal` | `onedrive_shared`) 같은 출처 컬럼이 추가로 필요할 수 있음 — 커넥터 설계 착수 시 확정.
+
+**적용 순서 제안**: 서버 볼륨 개인 스코프(owner_id/visibility)가 OneDrive 커넥터보다 구현 난이도가 훨씬 낮고 모든 사용자에게 즉시 적용되므로 **먼저 만들고**, OneDrive 연동(§26 방식 B)은 그 위에 얹는 add-on으로 나중에 붙인다.
 
 ---
 
@@ -453,3 +474,45 @@ Document Core(검색·섹션·교정 결과 등)를 이 백엔드 밖의 다른 
 - **우리 자신의 RAG/챗봇이 우리 DB를 쓰는 것 자체는 MCP가 불필요** — `RAGService`가 자기 함수를 호출하는 것뿐이라 OpenAI function calling으로 충분(클라이언트=서버=우리, M×N 문제 자체가 없음).
 - **MCP가 값어치를 갖는 시점**: 우리가 통제하지 않는 외부 에이전트(예: 별도 AI 서비스 "AI 내편중구" 같은 파트너 서비스)가 커스텀 연동 코드 없이 우리 tool을 갖다 쓰려 할 때, 혹은 반대로 우리가 남이 만든 기존 MCP 서버(Slack/GitHub/Notion 등)를 우리 에이전트에 갖다 꽂아야 할 때.
 - **선행 조건**: 노출할 tool의 실제 구현(RAG 검색 등)이 먼저 있어야 함 → MVP2(RAG) 이후, 그리고 실제 외부 소비자 요구가 확인된 시점에 착수하는 게 순서. 지금 시점에 MCP 서버부터 설계하면 아직 없는 결과물 위에 인터페이스만 먼저 짓는 셈.
+
+---
+
+## 28. 프로젝트 멤버십 & 가시성 (2026-08-20 확정)
+
+> **현재 상태(코드로 확인, 2026-08-20)**: 권한 체크가 전혀 없다. `get_current_user`는 토큰 유효성만 검증하고, project/document 단위 접근 제어는 어디에도 없다 — 로그인한 사용자라면 **다른 사람이 만든 프로젝트/문서를 전부 조회·다운로드·삭제**할 수 있다. `list_projects`는 주석에도 "아직 멤버십 필터링은 없어 로그인만 하면 전부 보인다"고 스스로 적어뒀다. `/dashboard`도 전역(또는 `project_id` 필터)이라 동일하게 전체 공개고, `/mypage`만 `created_by=user.id`로 개인 집계를 따로 뗀 상태다.
+
+### 가시성 단위: Project
+
+document/folder가 아니라 **project 하나에** `visibility`를 둔다. 그 프로젝트 안의 모든 folder/document/version은 그대로 상속받는다. 모든 문서 관련 엔드포인트(`documents`, `folders`, `versions`, `sections`, `chunks`, `diff`, `download`)가 결국 `project_id`로 귀결되므로, 권한 체크 지점을 프로젝트 하나로 통일할 수 있다 — document/folder마다 별도 ACL을 두는 것보다 훨씬 가볍다.
+
+**스키마**
+- `projects`: `owner_id`(FK `users.id`) + `visibility`(`private` | `invite` | `public`) 컬럼 추가
+- `project_members` 신규 테이블: `project_id, user_id, role(owner | member), invited_by, created_at` — `invite` 프로젝트에서만 실질적으로 조회된다. `public` 프로젝트는 멤버십 없이 모든 인증 사용자가 조회 가능, `private` 프로젝트는 사실상 `project_members`가 owner 한 명뿐인 특수 케이스로 취급 가능(별도 분기 불필요).
+- role은 2단계(`owner` / `member`)만 둔다 — `owner`만 삭제·visibility 전환·멤버 초대/제거 가능, `member`는 조회+문서 업로드 등 일반 작업 가능. viewer/editor 세분화는 지금 요구사항엔 과함, 필요해지면 그때 추가.
+- `documents`/`folders` 스키마는 변경 없음(§26-1의 owner_id/visibility 안은 폐기, §26-1 참고).
+
+**권한 체크**: `api/deps.py`에 `get_current_user`와 별개로 `require_project_access(project_id)` 같은 dependency를 추가해, project 관련 라우터가 공통으로 사용하도록 한다.
+```
+visibility=public  → 인증된 모든 사용자 통과
+visibility=invite  → project_members 에 속한 사용자만 통과
+visibility=private → owner_id == 현재 사용자만 통과
+```
+
+**승격/이동 워크플로우** (개인 작업 → 팀 공유로 전환)
+- ① **문서 이동**: 완성된 문서를 다른(공유) 프로젝트로 옮김 — `document.project_id`를 바꾸는 신규 API(`PATCH /documents/{id}/move` 등) 필요. 폴더 구조가 다르면 `folder_id`도 같이 조정.
+- ② **프로젝트 전환**: 작업 중이던 프로젝트 자체를 `private → invite → public`으로 승격 — visibility PATCH + (`invite`로 갈 경우) 멤버 초대 API.
+- 두 경로는 서로 대체 가능한 선택지이지 순서가 정해진 단계가 아니다. 어느 쪽을 쓸지는 사용자가 "이 문서만 넘길지" vs "작업공간 전체를 공유로 바꿀지"에 따라 고른다.
+
+**Storage(§26/§26-1)와의 관계**: 독립된 축이다. "누가 볼 수 있는가"(visibility/membership)와 "파일이 물리적으로 어디 저장되는가"(서버 볼륨/OneDrive)는 서로 무관하게 조합된다 — private 프로젝트도 지금처럼 서버 볼륨(`LocalStorageProvider`)을 그대로 쓴다.
+
+### 대시보드 스코프 (2026-08-20 확정)
+
+- **일반 사용자 `/dashboard`**: 전역 집계가 아니라 **본인이 접근 가능한 프로젝트만** 집계하도록 좁힌다 — `public` 전체 + 본인이 `project_members`로 초대된 `invite` 프로젝트 + 본인 소유 `private` 프로젝트. 이렇게 하지 않으면 private 프로젝트의 존재/건수가 전역 통계 숫자에 그대로 새어나가(문서 개수, 파이프라인 상태 등) 프라이버시 문제가 된다.
+- **전역 집계(관리자용)**: `User.role`(지금은 `member` 기본값만 있고 실제로 아무 데도 분기되지 않는 죽은 필드)에 `admin` 값을 살려서, `role=admin`만 접근 가능한 별도 화면/엔드포인트(예: `/admin/dashboard/summary`)로 분리한다. 지금의 `/dashboard` 전역 집계 동작을 그대로 이관하면 된다.
+- `/mypage`(개인 활동/통계, `created_by` 기준)는 지금 구조를 그대로 유지 — 이번 변경과 별개로 이미 잘 분리되어 있다.
+
+### 미결 사항 (착수 시점에 확정)
+
+- 멤버 제거(`project_members`에서 삭제) 시, 그 사람이 이미 올린 문서의 `created_by`/소유권은 유지할지 — 프로젝트 접근 권한만 박탈하고 문서는 남기는 쪽이 기본이 될 것으로 보임(작성자 기록 보존).
+- 초대 시 알림 여부 — §27-1 알림 기능과 연결 가능(활동 로그에 `PROJECT_MEMBER_INVITE` 액션 추가하는 정도로 충분할 수 있음).
+- 기존에 이미 만들어진 프로젝트들의 기본 visibility 마이그레이션 값(전부 `public`으로 시작해 점진적으로 잠그는 안이 가장 안전).
