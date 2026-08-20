@@ -293,7 +293,7 @@ projects → folders → documents → document_versions → document_sections �
 
 **Document Upload**: `Upload → File Validation → Storage 저장 → documents 생성 → document_versions 생성 → Processing Job 등록 → Response`.
 
-**Document Parser**: 파일 종류별 Adapter — `PDFParser / HWPXParser / DOCXParser / XLSXParser / PPTXParser`. 초기엔 PDF·HWPX·DOCX부터. 결과는 **Unified Document**(Metadata + Section{Title, Content, Page, Order} + Table)로 통일 → AI 기능이 파일 포맷을 몰라도 됨.
+**Document Parser**: 파일 종류별 Adapter — `PDFParser / HWPXParser / DOCXParser / XLSXParser / PPTXParser`. 초기엔 PDF·HWPX·DOCX부터. 결과는 **Unified Document**(Metadata + Section{Title, Content, Page, Order} + Table)로 통일 → AI 기능이 파일 포맷을 몰라도 됨. **`PPTXParser`는 2026-08-19 로드맵 백로그로 확정** — 슬라이드를 Section 단위(슬라이드=heading, 슬라이드 내 텍스트박스=body)로 매핑하고, `correction_service`도 PPTX용 텍스트 치환을 추가해 다른 포맷과 동일하게 교정 적용까지 지원하는 게 목표.
 
 **Chunking**: 단순 500자 분할이 아니라 제목/문단/조항/Section 구조를 우선 보존.
 
@@ -306,6 +306,7 @@ projects → folders → documents → document_versions → document_sections �
 **③ RAG Chat**: `Question → Local Query Embedding → Project/Folder Filter → pgvector Search + Keyword Search → Top-K → GPT → Answer + Citation`.
 - **Hybrid Search**: Vector Search + PostgreSQL Full Text Search 결합(의미 검색 + 정확한 용어 검색).
 - 출처는 `document_id, section_id, page_start, page_end` 기준으로 생성.
+- **③-1 퀴즈 기능 (2026-08-19 확정, MVP2 범위)**: 같은 Retrieval Engine 위에 얹는다 — `프로젝트/문서 범위 지정 → RAG Retrieval → GPT가 문제(객관식/주관식) + 정답 + 해설 생성 → 문제집으로 저장`. 사용자는 생성된 문제를 수정하거나, 직접 문제를 추가(커스텀/직접 생성)할 수 있고, 응시 이력(히스토리: 제출한 답, 채점 결과)도 남는다. DB 설계는 착수 시점에 확정 — `ai_analysis_results`를 재사용할지, 별도 `quiz_sets`/`quiz_items`/`quiz_attempts` 테이블을 새로 둘지는 미정(문제집이 문서와 독립적으로 수정·재응시되는 게 핵심이라 별도 테이블 쪽에 무게).
 
 **④ 문서 자동 분류**: `Document → 대표 Section → GPT → Classification → 사용자 확인 → Metadata 저장`. 결과: 문서 유형/카테고리/태그.
 
@@ -370,7 +371,7 @@ projects → folders → documents → document_versions → document_sections �
 ## 22. MVP 단계
 
 - **MVP 1**: Docker PG/pgvector · DBeaver · FastAPI · Next.js · Project · Upload · Parser · Document Core · GPT 오탈자검증
-- **MVP 2**: Local Embedding · Benchmark · Final Model · Vector Search · RAG Chat
+- **MVP 2**: Local Embedding · Benchmark · Final Model · Vector Search · RAG Chat · 퀴즈 기능(RAG 기반 문제/문제집 생성·수정·커스텀, 답변+해설, 응시 히스토리)
 - **MVP 3**: 자동 분류 · 관련 문서 추천
 - **MVP 4**: Version · Document Diff
 - **MVP 5**: Rule 관리 · 규정 Validation
@@ -412,9 +413,9 @@ User → Next.js → FastAPI
 
 ---
 
-## 26. (향후 아이디어) 외부 문서 유입 소스 — Teams/OneDrive 연동
+## 26. 외부 문서 유입 소스 — Teams/OneDrive 연동
 
-> 확정 아님. 수동 Upload(Phase 5) → Parser(Phase 6) 파이프라인이 돈 **이후**에 얹을 커넥터. 지금은 파킹.
+> 2026-08-19 로드맵 백로그로 확정(착수 시점·순서는 미정). 수동 Upload(Phase 5) → Parser(Phase 6) 파이프라인이 돈 **이후**에 얹을 커넥터.
 
 사내가 **Microsoft 365(Teams/OneDrive)**를 쓰므로, Teams/OneDrive 공유 폴더를 우리 플랫폼의 **유입 소스(ingest source)**로 연결할 수 있다. 중요한 구분: 클라우드 폴더는 **Storage 가 아니라 소스**다. 정본(source of truth)은 여전히 우리 `StorageProvider`(Local/MinIO/S3) + Document Core 이고, 커넥터는 "외부 파일 → 우리 스토리지로 복사 + ingest 트리거" 역할만 한다.
 
@@ -427,3 +428,28 @@ User → Next.js → FastAPI
 - 파일 + 메타데이터 + 버전이력 + 권한까지 확보. 헤드리스로 안정적.
 
 **아키텍처 반영**: 임베딩 Provider 추상화와 같은 패턴으로 `DocumentSource`(또는 `Connector`) 인터페이스를 두고 `ManualUpload / OneDriveSource(Graph)` 로 확장. 결정할 것: 공유 계정 1개로 접근할지 vs 사용자별 OAuth 로 권한 매핑할지.
+
+---
+
+## 27. (향후 아이디어) 추가 로드맵 백로그 — 알림 · 문서 정리/Notion/즐겨찾기/메모 · MCP 서버
+
+> 2026-08-19 로드맵 백로그로 확정(착수 시점·순서·상세 설계 미정). 아래는 방향성 메모.
+
+### 27-1. 알림 기능
+
+무엇을 알릴지(교정 완료, 규정 검증 완료, 새 버전 업로드 등)는 `activity_logs`(`analysis.complete` 등 기존 12종 액션)에서 상당 부분 재사용 가능 — 별도 알림 이벤트 소스를 새로 만들기보다 `activity_logs` 위에 "구독/읽음" 레이어를 얹는 쪽이 자연스러움. 전달 채널(인앱만 vs 이메일/웹푸시 포함)은 미정.
+
+### 27-2. 문서 정리 / 즐겨찾기 / 메모 / Notion 연동
+
+- **즐겨찾기**: 사용자별 `document_id`(또는 `folder_id`) 북마크 — 간단한 조인 테이블(`user_id, document_id, created_at`)로 충분, Document Core 스키마 변경 불필요.
+- **메모**: 문서 단위 또는 섹션 단위 메모 — 섹션 단위로 가면 `document_sections`와 별개로 `document_notes(section_id?, document_id, user_id, content)` 테이블 필요.
+- **문서 정리**: 폴더 체계 안에서의 태그/라벨링 정도로 볼지, 별도 정리 뷰(예: 아카이브)가 필요한지는 미정.
+- **Notion 연동**: OneDrive 커넥터(§26)와 같은 성격의 **외부 유입/동기화 소스**로 볼지, 아니면 반대로 **우리 문서를 Notion으로 내보내는 export**로 볼지 방향이 정반대라 착수 전에 먼저 정해야 함. Notion API는 공식 OAuth + REST 지원.
+
+### 27-3. MCP 서버
+
+Document Core(검색·섹션·교정 결과 등)를 이 백엔드 밖의 다른 서비스/에이전트가 재사용하게 하려는 목적. **핵심 판단 기준**: MCP는 프로토콜(전송 계층)을 표준화하는 것이지 DB 스키마나 tool 구현 자체를 대신해주지 않는다 — 각 tool 함수(`search_chunks`, `get_document_sections`, `get_proofread_findings` 등)는 여전히 우리가 우리 스키마에 맞춰 직접 구현해야 한다.
+
+- **우리 자신의 RAG/챗봇이 우리 DB를 쓰는 것 자체는 MCP가 불필요** — `RAGService`가 자기 함수를 호출하는 것뿐이라 OpenAI function calling으로 충분(클라이언트=서버=우리, M×N 문제 자체가 없음).
+- **MCP가 값어치를 갖는 시점**: 우리가 통제하지 않는 외부 에이전트(예: 별도 AI 서비스 "AI 내편중구" 같은 파트너 서비스)가 커스텀 연동 코드 없이 우리 tool을 갖다 쓰려 할 때, 혹은 반대로 우리가 남이 만든 기존 MCP 서버(Slack/GitHub/Notion 등)를 우리 에이전트에 갖다 꽂아야 할 때.
+- **선행 조건**: 노출할 tool의 실제 구현(RAG 검색 등)이 먼저 있어야 함 → MVP2(RAG) 이후, 그리고 실제 외부 소비자 요구가 확인된 시점에 착수하는 게 순서. 지금 시점에 MCP 서버부터 설계하면 아직 없는 결과물 위에 인터페이스만 먼저 짓는 셈.

@@ -203,6 +203,19 @@ provider 추상화(`app/services/auth_providers.py`): `mock`(dev 전용, 크리�
 
 - citation: `document_id, section_id, page_start, page_end, score`.
 
+### 6-1. 퀴즈 (`/api/v1/quizzes`) — 2026-08-19 확정, MVP2 범위 (⏳, 엔드포인트는 방향성 초안, 착수 시 확정)
+
+RAG Retrieval Engine을 재사용해 문서 기반 문제/문제집을 생성한다. DB 설계(별도 `quiz_sets`/`quiz_items`/`quiz_attempts` 테이블 vs `ai_analysis_results` 재사용)는 미정 — 문제집이 문서와 독립적으로 수정·재응시되는 특성상 별도 테이블 쪽에 무게. 아래는 방향성만 기록.
+
+| Method | Endpoint | 결과 | 상태 |
+|---|---|---|---|
+| POST | `/api/v1/quizzes/generate` | `{scope:{project_ids[], folder_ids[], document_ids[]}, count, difficulty?}` → RAG 기반 문제 생성(정답+해설 포함) | ⏳ |
+| GET | `/api/v1/quizzes` | 문제집 목록 | ⏳ |
+| GET | `/api/v1/quizzes/{quiz_id}` | 문제집 상세(문항+정답+해설) | ⏳ |
+| PATCH | `/api/v1/quizzes/{quiz_id}` | 문제 수정/커스텀(문항 추가·수정·삭제) | ⏳ |
+| POST | `/api/v1/quizzes/{quiz_id}/attempts` | 답안 제출 → 채점 + 해설 | ⏳ |
+| GET | `/api/v1/quizzes/{quiz_id}/attempts` | 응시 히스토리 | ⏳ |
+
 ---
 
 ## 7. Embedding Lab (관리자) — MVP2
@@ -218,7 +231,54 @@ provider 추상화(`app/services/auth_providers.py`): `mock`(dev 전용, 크리�
 
 ---
 
-## 8. 공통 / 기타
+## 8. PPT 지원 — 2026-08-19 로드맵 백로그 (⏳)
+
+현재 PPTX는 업로드는 되지만(확장자 화이트리스트에 포함) 파서가 없어 `FAILED`로 끝난다. 목표는 다른 포맷과 동등하게 조회/교정 적용까지 지원하는 것 — 새 엔드포인트는 없고 기존 4절(문서)·5절(AI 모듈) 엔드포인트가 PPTX에도 그대로 동작하게 만드는 것이 범위.
+
+- `app/services/parsing/`에 `PPTXParser` 추가(슬라이드=heading, 텍스트박스=body 매핑) → `document_sections`/`document_chunks`가 다른 포맷과 동일 스키마로 채워짐.
+- `correction_service.py`에 PPTX 분기 추가(python-pptx 기반 텍스트 치환) → 교정 적용(`POST .../apply`)도 PPTX에서 동작.
+- `requirements.txt`에 `python-pptx` 추가 필요(아직 없음).
+
+---
+
+## 9. 알림 — 2026-08-19 로드맵 백로그 (⏳, 엔드포인트 미확정)
+
+`activity_logs`(2절 참고)가 이미 이벤트 소스 역할을 상당 부분 할 수 있어, 별도 이벤트 파이프라인보다는 그 위에 사용자별 "읽음/구독" 레이어를 얹는 방향으로 검토 중. 전달 채널(인앱만 vs 이메일/웹푸시)은 미정.
+
+| Method | Endpoint | 결과 | 상태 |
+|---|---|---|---|
+| GET | `/api/v1/notifications?unread_only=` | 내 알림 목록 | ⏳ |
+| PATCH | `/api/v1/notifications/{id}/read` | 읽음 처리 | ⏳ |
+
+---
+
+## 10. 문서 정리 / 즐겨찾기 / 메모 / Notion 연동 — 2026-08-19 로드맵 백로그 (⏳, 엔드포인트 미확정)
+
+- **즐겨찾기**: `user_id, document_id` 조인 테이블로 충분, Document Core 스키마 변경 불필요.
+- **메모**: 문서 단위 vs 섹션 단위 결정 필요 — 섹션 단위면 `document_notes(section_id?, document_id, user_id, content)` 신규 테이블.
+- **Notion 연동**: 외부 유입 소스(§ DESIGN.md §26 OneDrive와 같은 성격)로 볼지, 우리 문서를 Notion으로 내보내는 export로 볼지 방향이 정반대 — 착수 전 결정 필요.
+
+| Method | Endpoint | 결과 | 상태 |
+|---|---|---|---|
+| POST | `/api/v1/documents/{doc_id}/favorite` | 즐겨찾기 토글 | ⏳ |
+| GET | `/api/v1/favorites` | 내 즐겨찾기 목록 | ⏳ |
+| GET/POST | `/api/v1/documents/{doc_id}/notes` | 메모 조회/작성 | ⏳ |
+
+---
+
+## 11. MCP 서버 — 2026-08-19 로드맵 백로그 (⏳, REST 엔드포인트 아님)
+
+Document Core(검색·섹션·교정 결과 등)를 이 백엔드 밖의 다른 서비스/에이전트가 표준 프로토콜(MCP)로 재사용하도록 tool로 노출하는 것이 목적. **선행 조건**: 노출할 실제 기능(특히 RAG 검색)이 먼저 구현돼 있어야 함 → MVP2 이후, 그리고 실제 외부 소비자 요구가 확인된 시점에 착수. 우리 자신의 RAG/챗봇이 우리 DB를 쓰는 것 자체는 OpenAI function calling으로 충분해 MCP가 불필요하다 — MCP는 외부 팀의 에이전트가 커스텀 연동 코드 없이 붙어야 하는 실제 수요가 생겼을 때만 값어치가 있다(상세 설계 방향은 DESIGN.md §27-3).
+
+후보 tool(방향성 메모, 미확정):
+- `search_chunks(query, project_id)` — pgvector 벡터 검색 (RAGService 완성 후)
+- `get_document_sections(document_id)` — 파싱된 섹션 트리 조회
+- `get_proofread_findings(document_id)` — 최근 교정 결과 조회
+- `list_documents(project_id, filters)` — 문서 메타데이터 조회
+
+---
+
+## 12. 공통 / 기타
 
 | Method | Endpoint | 용도 | 상태 |
 |---|---|---|---|
