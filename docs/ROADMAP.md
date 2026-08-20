@@ -1,0 +1,31 @@
+# 로드맵 (Roadmap)
+
+`CLAUDE.md`에서 분리된 문서입니다. "무엇이 되어있는가"는 [docs/STATUS.md](STATUS.md), "다음에 뭘 할 것인가/어디로 편입되는가"는 이 문서입니다.
+
+## Development phases
+
+The platform is built in phases; MVP 1 is the ingest path + proofread. Full detail (DB schema, benchmark plan, per-feature flows) is in [docs/DESIGN.md](DESIGN.md). High-level order:
+
+1. **MVP 1** — Docker PG/pgvector · FastAPI · Next.js · Project/Folder · Document Upload · Parser (PDF/HWPX/DOCX → Unified Document) · **Document Core** (Document→Version→Section→Chunk) · GPT proofread. *Current position: DB schema + Alembic, auth (Google+JWT), Project & Folder CRUD, Document Upload + Storage (P5), **Parser incl. OCR (P6)**, **Chunking (P7)**, and **Proofread (P8)** all done — the full ingest path Upload→Parse→Chunk plus the first AI module (proofread) work end-to-end. **MVP1 backend is functionally complete** — proofread is now wired to **real OpenAI GPT** (async 202+polling + batched calls), scanned-PDF OCR got heading detection/quality-flagging/preprocessing, and findings can now be accepted/rejected and applied back to the source file as a new version (DOCX/HWPX real edit, PDF visual patch, TXT/MD splice); the mock provider remains as the keyless fallback. Remaining before calling MVP1 fully closed: frontend wiring (async proofread poll + section tree + accept/reject/apply UI). **Next big step: MVP2 (local embedding + RAG, Phase 9).*** See [docs/STATUS.md](STATUS.md) for the full feature-by-feature detail.
+2. **MVP 2** — Local embedding env → connect BGE-M3/KURE-v1/Qwen3 behind one `EmbeddingProvider` interface → benchmark on real project docs (`chunk_embeddings` keyed by `embedding_model_id` so models compare side by side) → pick final model → embed all chunks → pgvector Vector Search → RAG Chat (hybrid vector + full-text, with citations). **Scope now includes Quiz** (2026-08-19 확정) — RAG retrieval 위에 문제/문제집 생성·수정·커스텀·직접생성, 답변+해설, 히스토리를 얹는다. 같은 Retrieval Engine 재사용, 별도 채점/문제집 저장 스키마는 착수 시 설계.
+3. **MVP 3** — Auto-classification · related-document recommendation (reuse Document Core + embeddings).
+4. **MVP 4** — Version management · Document Diff. **Document Diff backend is done** (2026-08-20, see `GET /documents/{doc_id}/diff` in [docs/STATUS.md](STATUS.md)) — no embeddings/LLM needed since it's a two-known-versions comparison, not a search problem. Frontend rendering (git-diff-style view) and "version management" (labeling/rollback UX) are still open.
+5. **MVP 5** — RULE-type documents · regulation validation.
+
+## 로드맵 백로그 (2026-08-19 확정, 우선순위·순서 미정)
+
+아직 어느 MVP phase로 편입할지 확정하지 않은 항목들. 착수 시점이 오면 적절한 phase에 편입하고 이 목록에서 뺀다.
+
+- [x] **문서 직접 수정/조회 (PDF 포함)** — 이미 구현됨. [docs/STATUS.md](STATUS.md)의 "Correction apply" 항목 참고(DOCX/HWPX/PDF/TXT/MD 지원, 교정 적용 흐름).
+- [x] **PPT 파일 지원 (수정/조회)** — 2026-08-19 구현. `app/services/parsing/pptx_parser.py`(`PptxParser`, registry 등록) — 슬라이드→도형→문단 순회, title placeholder는 heading(level 1), 나머지 텍스트 프레임(부제/본문 placeholder·순수 텍스트박스 구분 없이)은 paragraph, 표는 table. 텍스트 프레임이 없는 도형(이미지·차트·OLE 등)은 섹션화 대상에서 제외. 그룹 도형은 `_iter_shapes`가 재귀적으로 풀어 안의 텍스트박스/표까지 잡는다(중첩 그룹도 지원). `correction_service._apply_pptx`가 기존 `_replace_span_in_nodes`를 그대로 재사용(python-pptx run도 `.text` getter/setter라 호환). `python-pptx==1.0.2` 추가.
+  - **버그 수정 (2026-08-19)**: `_is_title_shape`가 placeholder가 아닌 도형(텍스트박스 등)에서 `shape.placeholder_format`에 바로 접근해 `ValueError`를 던졌다 — python-pptx는 non-placeholder에서 이 프로퍼티 접근 자체가 예외를 던지지 `None`을 주지 않는다. 슬라이드에 placeholder 아닌 도형이 하나만 있어도 파싱 전체가 죽어(백그라운드 파싱 실패 → 업로드는 202로 성공해도 상태가 FAILED로 표시) 실제 배포 후 바로 발견됨. `shape.is_placeholder`로 먼저 걸러내도록 수정.
+- [x] **표 셀 apply 지원 (DOCX/HWPX/PPTX)** — 2026-08-19 구현. 표 섹션도 이제 교정 반영이 된다. `correction_service._apply_docx_table_cell`/`_apply_hwpx_table_cell`/`_apply_pptx_table_cell`가 표의 셀을 순회하며 원문을 담은 셀 하나만 찾아 그 셀의 run/텍스트노드에만 `_replace_span_in_nodes`를 적용 — 셀 경계를 넘어 span을 찾지 않으므로 다른 셀 데이터가 섞이지 않는다. HWPX는 `hwpx_parser.iter_table_cells`(신규, `<hp:tc>` 순회)를 추가해 재사용. 표 전체 텍스트가 분석 시점과 달라졌으면(drift) 그 표의 findings는 통째로 skip. PDF는 표 구조 자체를 파싱하지 않아(PyMuPDF 네이티브 텍스트만) 해당 없음.
+- [x] **XLSX 파일 지원 (조회만)** — 2026-08-19 구현. `app/services/parsing/xlsx_parser.py`(`XlsxParser`, registry 등록) — `openpyxl.load_workbook(data_only=True, read_only=True)`로 워크북을 열어 시트별로 시트명은 heading(level 1), 시트 데이터는 한 시트당 table 섹션 하나(빈 행은 skip)로 변환. `data_only=True`라 수식이 아니라 마지막 저장 시점의 계산값을 읽는다(엑셀에서 한 번도 열어본 적 없는 파일은 캐시된 값이 없어 수식 문자열이 그대로 나올 수 있음 — openpyxl 자체 한계). `openpyxl==3.1.5` 추가 — **새 pip 의존성이라 `--reload` 핫리로드로는 안 잡히고 `docker compose up -d --build backend` rebuild가 필요했다.** correction_service에 `_apply_xlsx_*`가 아직 없어 **교정 적용(표 셀 재작성)은 미지원** — 조회/프루프리드까지만 된다.
+- [ ] **문서 검색 — 상세검색** — `GET /documents/search`(이름/설명 키워드 매칭)는 있음, 프로젝트/상태/기간 등 필터를 조합하는 상세검색은 추후 추가 예정.
+- [ ] **알림 기능**
+- [ ] **RAG 챗봇 + 퀴즈 기능** — 위 MVP 2 확장 항목과 동일 (여기 중복 기재는 생략).
+- [ ] **OneDrive 동기화** (storage 아님, ingest source) — 설계 메모는 [[onedrive-ingest-source-idea]] / DESIGN.md §26. 아직 미착수.
+- [ ] **문서 정리 / Notion 연동 / 즐겨찾기 / 메모 기능**
+- [ ] **MCP 서버** — Document Core(문서 검색·섹션·교정 결과 등)를 이 백엔드 밖의 다른 서비스/에이전트가 표준 프로토콜로 재사용하도록 tool로 노출. **내부적으로 우리 자신의 RAG/챗봇이 우리 DB를 쓰는 것 자체는 MCP가 필요 없다** (그냥 function calling으로 충분) — MCP는 외부 팀의 에이전트(예: 별도 AI 서비스)가 커스텀 연동 코드 없이 붙어야 하는 실제 수요가 생겼을 때 그 tool 노출 계층으로 추가한다.
+
+관련 문서: 지금 뭐가 구현되어 있는지는 [docs/STATUS.md](STATUS.md), 설계 근거는 [docs/DESIGN.md](DESIGN.md).

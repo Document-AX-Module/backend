@@ -137,6 +137,8 @@ provider 추상화(`app/services/auth_providers.py`): `mock`(dev 전용, 크리�
 | Method | Endpoint | 용도 | 상태 |
 |---|---|---|---|
 | GET | `/api/v1/documents/recent?limit=&project_id=` | 대시보드용 **프로젝트 교차** 최근 문서(+project_name+processing_status) | ✅ |
+| GET | `/api/v1/documents/search?q=&limit=` | 전역 검색창용 **프로젝트 교차** 문서 검색(이름/설명 ILIKE) | ✅ |
+| GET | `/api/v1/documents/{doc_id}/diff?from_version_id=&to_version_id=` | 두 버전 섹션 비교(added/deleted/modified/unchanged + 토큰 diff) | ✅ |
 | GET | `/api/v1/projects/{project_id}/documents?folder_id=&status=&type=` | 문서 목록(+author+current_version). `status` 는 **현재 버전의 처리 상태**(enum 검증 → 잘못된 값은 422) | ✅ |
 | POST | `/api/v1/projects/{project_id}/documents` (multipart) | 업로드 → 202 `{document, version}` | ✅ |
 | GET | `/api/v1/documents/{doc_id}` | 상세(+author+current_version) | ✅ |
@@ -153,6 +155,8 @@ provider 추상화(`app/services/auth_providers.py`): `mock`(dev 전용, 크리�
 - 상태 값: `UPLOADED · PARSING · PARSED · CHUNKING · CHUNKED · EMBEDDING · READY · FAILED` (모델 `document_versions.processing_status`). `status→progress`(%) 매핑 제공. **현재 파이프라인은 `CHUNKED`(75%)에서 종착** — `EMBEDDING→READY`는 임베딩(Phase 9)에서 이어짐.
 - **응답 보강**: 문서 상세/목록은 `author`(created_by id 해석 → id/name/email)와 `current_version`(version_no/processing_status/파일메타)를 포함(목록은 batch 조회로 N+1 방지). **`DocumentRead` 에 `status` 키는 없다** — 처리 상태는 `current_version.processing_status` 를 볼 것(위 "문서 상태는 하나뿐" 참고).
 - **`/documents/recent`** (대시보드 전용): `/projects/{id}/documents` 와 달리 **프로젝트를 가로질러** 최근 등록순으로 준다. 카드에서 추가 요청 없이 프로젝트 경로와 상태 배지를 그릴 수 있게 `project_name` 과 현재 버전의 `processing_status` 를 펼쳐 담은 납작한 뷰(`RecentDocumentRead`)이고, `author`/버전 상세는 없다. `limit` 1~50(기본 5), `project_id` 는 선택. 라우터에서 이 경로는 반드시 `/documents/{document_id}` **앞에** 등록해야 한다(뒤면 `recent` 가 id 로 매칭돼 422).
+- **`/documents/search`** (전역 검색창용, 2026-08-20 신규): `/documents/recent`와 응답 shape(`RecentDocumentRead`)은 같지만 최신순이 아니라 `q` 키워드로 이름/설명을 대소문자 무시 부분일치(`ILIKE`) 검색 — 역시 프로젝트를 가로지른다. 빈 검색어는 빈 배열. **지금은 이름/설명 단순 키워드 매칭뿐** — 프로젝트/상태/기간 등으로 좁히는 상세검색은 아직 없고 추후 추가 예정(필터 파라미터를 늘리는 형태가 될 듯). 라우터 등록 순서도 `recent`와 동일한 이유로 `/documents/{document_id}` 보다 앞이어야 한다.
+- **`/documents/{doc_id}/diff`** (2026-08-20 신규): "수많은 문서 중 비슷한 걸 찾는" 검색 문제가 아니라 "이미 정해진 v1·v2, 이 둘만 비교"하는 문제라 임베딩/LLM 없이 표준 라이브러리 `difflib`만으로 **동기** 계산한다(202+폴링 아님). 두 버전의 `document_sections`를 `(level, section_type, 정규화된 텍스트)` 키로 순서를 존중하며 정렬(`SequenceMatcher.get_opcodes`)해 섹션 단위 added/deleted/modified/unchanged를 가르고, "modified" 섹션만 단어+공백 토큰 단위로 다시 diff해 `{op, text}` 토큰 리스트를 만든다 — 프론트가 이 토큰을 순서대로 이어붙이면 원문이 그대로 재구성되고, 순서대로 렌더링하면 인텔리제이 git diff처럼 삭제/추가/유지 구간을 표시할 수 있다. `from_version_id`/`to_version_id`가 해당 문서 소속이 아니면 `404`. GPT 설명이나 저장(`ai_analysis_results`)은 없음 — 매 요청 재계산.
 - **업로드**: multipart `file`(필수) + `folder_id`/`name`/`description`(선택). 확장자 화이트리스트(pdf/hwpx/hwp/docx/xlsx/pptx/txt/md, `.env`로 조정) + 최대 50MB + 빈 파일 거부, 위반 시 `400`. 새 문서=version 1, `current_version_id` 세팅. sha256/file_size 저장. `description`은 문서(Document) 단위 컬럼.
 - **저장**: `StorageProvider`(Local) — `storage/documents/project-{pid}/document-{did}/v{n}/{uuid}.{ext}`, DB엔 상대 `storage_path`만. 컨테이너는 `/data/storage` 볼륨.
 - **파이프라인(BackgroundTasks)**: 업로드 → `run_parse_task` → Parser(포맷별 어댑터 + PDF 스캔본 OCR) → `document_sections`(계층/bbox) → Chunking(구조 인지, heading breadcrumb, 문장분할+overlap) → `document_chunks`. 미지원 확장자(hwp/xlsx/pptx)는 `FAILED`.
@@ -174,8 +178,8 @@ provider 추상화(`app/services/auth_providers.py`): `mock`(dev 전용, 크리�
 | POST | `/api/v1/documents/{doc_id}/classify` | 문서타입·카테고리·태그 | ⏳ (MVP3) |
 | POST | `/api/v1/documents/{doc_id}/validate` | 규정 검증(RULE 검색 → GPT) | ⏳ (MVP5) |
 | POST | `/api/v1/documents/{doc_id}/related` | 관련 문서 추천(vector search) | ⏳ (MVP3) |
-| POST | `/api/v1/documents/compare` | `{base_version_id, target_version_id}` → diff + GPT 설명 | ⏳ (MVP4) |
 
+- **문서비교는 여기 없다**: 처음엔 이 표에 있었지만, 검색(임베딩)도 GPT 판단도 필요 없는 "이미 정해진 두 버전 비교"라 4절 `/documents/{doc_id}/diff`(동기, `ai_analysis_results` 미사용)로 옮겼다. `classify`/`validate`/`related`는 반대로 셋 다 DESIGN.md상 "RAG Retrieval 재사용" 구조라 `chunk_embeddings`/`embedding_models`를 채우는 임베딩 파이프라인(MVP2, 아직 스키마만 있고 완전히 비어 있음)이 선행돼야 실제 동작한다 — 지금은 스텁만 있는 상태.
 - **proofread 흐름(202 + 폴링)**: `POST /proofread` 는 검증 후 `RUNNING` 레코드를 만들고 **즉시 `202`** 반환 → BackgroundTasks 가 배치 교정 수행 → 프론트는 `GET .../analyses/{analysis_id}` 로 `status`(RUNNING→COMPLETED/FAILED)를 폴링. 파싱 전(`UPLOADED/PARSING`)이면 `409`, 문서 없음 `404`.
 - **배치 호출**: 섹션을 글자수/개수 상한(`proofread_batch_max_chars`·`_max_sections`)으로 묶어 **한 프롬프트에 여러 섹션**을 보낸다(`[번호]` 마커 → 결과 index 로 되매핑). 섹션당 1회 순차 호출 대비 호출 수·시간·비용 대폭 절감(11섹션 기준 순차 17s → 배치 1회 ~7.5s). 각 finding 은 `original→suggestion`·`reason`·`category` + `section_id`·`page_start/end`.
 - **LLM provider 추상화**(`app/services/llm/`): `MockLLMProvider`(규칙 기반, 키 불필요) + `OpenAILLMProvider`(httpx Chat Completions, `proofread`/`proofread_batch`). `LLM_PROVIDER=auto`면 `OPENAI_API_KEY` 유무로 자동 선택. 프롬프트는 `app/services/llm/prompts.py`에 분리. 최신 모델(gpt-5.x)은 `temperature` 커스텀 불가라 payload 에서 생략.

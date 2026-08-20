@@ -312,7 +312,7 @@ projects → folders → documents → document_versions → document_sections �
 
 **⑤ 관련 문서 추천**: `현재 Document → 대표 Chunk 또는 Document Vector → Vector Search → Related Documents(유사도 %)`. RAG Retrieval Engine 재사용.
 
-**⑥ Document Diff**: `V1 + V2 → Section Matching → Text Diff → Semantic Diff → GPT Explanation`.
+**⑥ Document Diff**: `V1 + V2 → Section Matching → Text Diff → Semantic Diff → GPT Explanation`. **실제 구현(2026-08-20, `GET /documents/{doc_id}/diff`)은 앞 두 단계까지만이다** — Section Matching(`difflib.SequenceMatcher`로 두 버전의 섹션을 정렬)과 Text Diff(수정된 섹션만 단어 단위 토큰 diff)로 충분하다고 판단해 Semantic Diff/GPT Explanation은 뺐다. 검색이 아니라 이미 정해진 두 버전 비교라 임베딩도 필요 없고, 프론트에서 git diff 스타일로 바뀐 부분만 시각적으로 보여주면 되는 요구라 GPT 설명도 불필요 — 동기 계산, 결과 저장 없음(매 요청 재계산).
 
 **⑦ 규정 검증**: 특정 Document를 `RULE` 타입으로 지정(예: 개인정보 처리지침, 보안규정). `대상 Document → 관련 Rule 검색 → Local Embedding → pgvector Retrieval → GPT Validation → Validation Result`.
 
