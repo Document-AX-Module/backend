@@ -17,6 +17,7 @@ from app.models.notification import Notification
 from app.models.project import Project
 from app.models.project_member import ProjectMember
 from app.models.push_subscription import PushSubscription
+from app.models.text_proofread_job import TextProofreadJob
 from app.models.user import User
 
 __all__ = [
@@ -34,4 +35,5 @@ __all__ = [
     "ActivityLog",
     "PushSubscription",
     "Notification",
+    "TextProofreadJob",
 ]
