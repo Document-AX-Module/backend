@@ -142,7 +142,9 @@ app/
 │   ├── notification_service.py # notify() = in-app row + Web Push in one call; best-effort (never breaks the caller)
 │   ├── push_service.py      # VAPID Web Push send/subscribe (pywebpush)
 │   ├── user_service.py      # user search for the member-invite picker
-│   ├── llm/                 # LLMProvider: base, mock_provider, openai_provider, factory(get_llm_provider), prompts
+│   ├── rag_service.py       # RAG 챗봇: 검색(Retriever) + 생성(LLMProvider) 조립, 대화/인용 저장
+│   ├── rag/                 # retriever.py — 질문 → 임베딩 → pgvector → 권한/스코프 필터 → Top-K (GPT 없음)
+│   ├── llm/                 # LLMProvider: base, mock_provider, openai_provider, factory(get_llm_provider), prompts (proofread + RAG)
 │   ├── parsing/             # format adapters: base, registry, text/docx/pdf/hwpx_parser, ocr (Tesseract + OpenCV preprocess)
 │   ├── storage.py           # StorageProvider (LocalStorageProvider today; MinIO/S3 later)
 │   └── auth_service.py  auth_providers.py   # MockProvider / GoogleProvider behind one interface
@@ -151,7 +153,7 @@ app/
 │   └── v1/
 │       ├── router.py       # aggregates module routers — register new ones here
 │       ├── health.py  auth.py  dashboard.py  mypage.py  projects.py  folders.py  documents.py  proofread.py
-│       ├── users.py  notifications.py  push.py
+│       ├── users.py  notifications.py  push.py  embedding.py  quiz.py  rag.py
 alembic/                     # migrations (run: alembic upgrade head)
 docs/                        # STATUS.md (what's built), ROADMAP.md (phases+backlog), DESIGN.md (design), api-spec.md (contract), API_REFERENCE.md (generated per-endpoint ref)
 ```

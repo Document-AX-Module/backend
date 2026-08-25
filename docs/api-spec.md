@@ -55,9 +55,9 @@ provider 추상화(`app/services/auth_providers.py`): `mock`(dev 전용, 크리�
 
 | Method | Endpoint | 용도 | 상태 |
 |---|---|---|---|
-| GET | `/api/v1/dashboard/summary?project_id=` | 스탯 4종 + 주간 처리량 + 문서타입 분포 + 파이프라인 상태 카운트 | 🟡 구현됨, **`ragToday`는 RAG 미구현이라 항상 0** |
+| GET | `/api/v1/dashboard/summary?project_id=` | 스탯 4종 + 주간 처리량 + 문서타입 분포 + 파이프라인 상태 카운트 | ✅ (`ragToday`도 2026-08-25부터 실제 값) |
 | GET | `/api/v1/activity?limit=&project_id=&action=` | 최근 활동 피드 — `activity_logs` 조회 | ✅ |
-| GET | `/api/v1/rag/history?limit=` | 최근 RAG 질의(대시보드/검색 공용) | ⏳ |
+| GET | `/api/v1/rag/history?limit=` | 최근 RAG 질의(대시보드/검색 공용) — 계약은 §6 | ✅ (2026-08-25) |
 
 - **응답만 camelCase.** 프론트가 먼저 확정해 둔 계약(`frontend/src/lib/types.ts` 의 `DashboardSummary`/`ActivityItem`)에 맞추기 위해 이 섹션의 스키마만 `alias_generator=to_camel` 로 직렬화한다(`ragToday`, `weeklyProcessing`, `documentTypes`). 나머지 API 는 그대로 snake_case.
 - `project_id` 는 선택 — 없으면 전체 집계, 주면 해당 프로젝트로 스코프. **없는 id 면 빈 결과가 아니라 404** 다. `/dashboard/summary`·`/activity`·`/documents/recent` 세 엔드포인트가 동일하게 동작하므로, 프로젝트 스코프 대시보드에서 `Promise.all` 로 묶어도 일부만 404 가 나는 일은 없다(2026-08-16 통일 — 그전엔 summary 만 200 빈 집계였다). 조용히 빈 결과를 주면 프론트가 오타 난 id 를 "데이터 없음"으로 오인하기 때문.
@@ -175,17 +175,17 @@ provider 추상화(`app/services/auth_providers.py`): `mock`(dev 전용, 크리�
 | GET | `/api/v1/versions/{version_id}/chunks` | 청크(heading_path·bbox meta) | ✅ |
 | GET | `/api/v1/versions/{version_id}/events` | 진행 SSE(선택) | ⏳ |
 
-- 상태 값: `UPLOADED · PARSING · PARSED · CHUNKING · CHUNKED · EMBEDDING · READY · FAILED` (모델 `document_versions.processing_status`). `status→progress`(%) 매핑 제공. **현재 파이프라인은 `CHUNKED`(75%)에서 종착** — `EMBEDDING→READY`는 임베딩(Phase 9)에서 이어짐.
+- 상태 값: `UPLOADED · PARSING · PARSED · CHUNKING · CHUNKED · EMBEDDING · READY · FAILED` (모델 `document_versions.processing_status`). `status→progress`(%) 매핑 제공. **2026-08-25부터 `CHUNKED` 다음 `EMBEDDING→READY`까지 자동 진행**(§7 Embedding Lab 참고) — 단, 활성 임베딩 모델이 없거나 임베딩 자체가 실패하면(모델 미설치/다운로드 실패 등) `FAILED`가 아니라 `CHUNKED`로 되돌아간다(오탈자 검증 등 `CHUNKED` 이상만 필요한 기능은 계속 동작해야 하므로).
 - **응답 보강**: 문서 상세/목록은 `author`(created_by id 해석 → id/name/email)와 `current_version`(version_no/processing_status/파일메타)를 포함(목록은 batch 조회로 N+1 방지). **`DocumentRead` 에 `status` 키는 없다** — 처리 상태는 `current_version.processing_status` 를 볼 것(위 "문서 상태는 하나뿐" 참고).
 - **`/documents/recent`** (대시보드 전용): `/projects/{id}/documents` 와 달리 **프로젝트를 가로질러** 최근 등록순으로 준다. 카드에서 추가 요청 없이 프로젝트 경로와 상태 배지를 그릴 수 있게 `project_name` 과 현재 버전의 `processing_status` 를 펼쳐 담은 납작한 뷰(`RecentDocumentRead`)이고, `author`/버전 상세는 없다. `limit` 1~50(기본 5), `project_id` 는 선택. 라우터에서 이 경로는 반드시 `/documents/{document_id}` **앞에** 등록해야 한다(뒤면 `recent` 가 id 로 매칭돼 422).
 - **`/documents/search`** (전역 검색창용, 2026-08-20 신규): `/documents/recent`와 응답 shape(`RecentDocumentRead`)은 같지만 최신순이 아니라 `q` 키워드로 이름/설명을 대소문자 무시 부분일치(`ILIKE`) 검색 — 역시 프로젝트를 가로지른다. 빈 검색어는 빈 배열. **지금은 이름/설명 단순 키워드 매칭뿐** — 프로젝트/상태/기간 등으로 좁히는 상세검색은 아직 없고 추후 추가 예정(필터 파라미터를 늘리는 형태가 될 듯). 라우터 등록 순서도 `recent`와 동일한 이유로 `/documents/{document_id}` 보다 앞이어야 한다.
 - **`/documents/{doc_id}/diff`** (2026-08-20 신규): "수많은 문서 중 비슷한 걸 찾는" 검색 문제가 아니라 "이미 정해진 v1·v2, 이 둘만 비교"하는 문제라 임베딩/LLM 없이 표준 라이브러리 `difflib`만으로 **동기** 계산한다(202+폴링 아님). 두 버전의 `document_sections`를 `(level, section_type, 정규화된 텍스트)` 키로 순서를 존중하며 정렬(`SequenceMatcher.get_opcodes`)해 섹션 단위 added/deleted/modified/unchanged를 가르고, "modified" 섹션만 단어+공백 토큰 단위로 다시 diff해 `{op, text}` 토큰 리스트를 만든다 — 프론트가 이 토큰을 순서대로 이어붙이면 원문이 그대로 재구성되고, 순서대로 렌더링하면 인텔리제이 git diff처럼 삭제/추가/유지 구간을 표시할 수 있다. `from_version_id`/`to_version_id`가 해당 문서 소속이 아니면 `404`. GPT 설명이나 저장(`ai_analysis_results`)은 없음 — 매 요청 재계산.
 - **업로드**: multipart `file`(필수) + `folder_id`/`name`/`description`(선택). 확장자 화이트리스트(pdf/hwpx/hwp/docx/xlsx/pptx/txt/md, `.env`로 조정) + 최대 50MB + 빈 파일 거부, 위반 시 `400`. 새 문서=version 1, `current_version_id` 세팅. sha256/file_size 저장. `description`은 문서(Document) 단위 컬럼.
 - **저장**: `StorageProvider`(Local) — `storage/documents/project-{pid}/document-{did}/v{n}/{uuid}.{ext}`, DB엔 상대 `storage_path`만. 컨테이너는 `/data/storage` 볼륨.
-- **파이프라인(BackgroundTasks)**: 업로드 → `run_parse_task` → Parser(포맷별 어댑터 + PDF 스캔본 OCR) → `document_sections`(계층/bbox) → Chunking(구조 인지, heading breadcrumb, 문장분할+overlap) → `document_chunks`. 미지원 확장자(hwp/xlsx/pptx)는 `FAILED`.
+- **파이프라인(BackgroundTasks)**: 업로드 → `run_parse_task` → Parser(포맷별 어댑터 + PDF 스캔본 OCR) → `document_sections`(계층/bbox) → Chunking(heading 유무로 구조 인지/semantic 자동 분기, §4 위 항목 참고) → `document_chunks` → Embedding(활성 모델로 `chunk_embeddings` 채움, §7) → `READY`. 미지원 확장자(hwp/xlsx/pptx)는 `FAILED`.
 - **PDF 스캔본 OCR 품질(2026-08-18)**: OCR 경로도 네이티브 텍스트 경로와 동등하게 취급한다 — Tesseract 전에 전처리(그레이스케일→디스큐→CLAHE, `opencv-python-headless`), 줄 높이 기반 제목 인식(네이티브의 폰트크기 휴리스틱과 동일 비율), confidence 60 미만 줄은 `meta.low_confidence=true`로 표시하고 문서 전체 저신뢰 비율 30% 이상이면 서버 로그에 경고. 프론트 배지는 아직 없음 — `meta.low_confidence`를 그대로 노출만 하는 상태.
-- **Section 표현 규칙**: `heading` 섹션은 `title`만 채우고 `content`는 비운다(제목 중복 표시 방지). 본문/표는 `title` 없이 `content`만. `level`(heading 깊이 1~9, 본문/표는 100)을 저장해 `SectionRead.level`로 노출 → 프론트가 `level`+`parent_section_id`로 접이식 트리 렌더. heading 은 chunk 로 만들지 않고 breadcrumb(`chunk_metadata.heading_path`)로만 쓰인다.
-- **아직**: `PATCH /documents/{id}`(이름/폴더/타입 변경), 사용자가 임의로 새 버전을 올리는 범용 업로드 엔드포인트(v2+ 생성 *메커니즘* 자체는 `DocumentService.create_version()`으로 이제 있지만, 지금은 아래 5절의 교정 적용(apply) 흐름에서만 호출된다 — "이 문서의 새 버전을 업로드" 라는 별도 라우트는 없음), SSE, 임베딩(READY).
+- **Section 표현 규칙**: `heading` 섹션은 `title`만 채우고 `content`는 비운다(제목 중복 표시 방지). 본문/표는 `title` 없이 `content`만. `level`(heading 깊이 1~9, 본문/표는 100)을 저장해 `SectionRead.level`로 노출 → 프론트가 `level`+`parent_section_id`로 접이식 트리 렌더. heading이 하나라도 있는 문서는 구조 인지 청킹(heading은 chunk로 만들지 않고 breadcrumb `chunk_metadata.heading_path`로만 사용), heading이 전혀 없는 문서(txt/hwpx, 스타일 없는 docx 등)는 semantic 청킹(문장 임베딩 거리 기반 경계 탐지)으로 자동 분기 — `chunk_metadata.chunking_strategy`("structure"|"semantic")로 구분 가능.
+- **아직**: `PATCH /documents/{id}`(이름/폴더/타입 변경), 사용자가 임의로 새 버전을 올리는 범용 업로드 엔드포인트(v2+ 생성 *메커니즘* 자체는 `DocumentService.create_version()`으로 이제 있지만, 지금은 아래 5절의 교정 적용(apply) 흐름에서만 호출된다 — "이 문서의 새 버전을 업로드" 라는 별도 라우트는 없음), SSE.
 
 ---
 
@@ -225,37 +225,102 @@ provider 추상화(`app/services/auth_providers.py`): `mock`(dev 전용, 크리�
 
 | Method | Endpoint | 결과 | 상태 |
 |---|---|---|---|
-| POST | `/api/v1/rag/query` | `{question, scope:{project_ids[], folder_ids[]}}` → `{answer, citations[]}` | ⏳ |
-| POST | `/api/v1/rag/query/stream` | 답변 토큰 SSE(선택) | ⏳ |
-| GET | `/api/v1/rag/history?limit=` | 최근 질의 | ⏳ |
+| POST | `/api/v1/rag/query` | `{question, scope?:{project_ids[], folder_ids[]}, conversation_id?, top_k?}` → `{conversation_id, message_id, question, search_question, answer, citations[], provider, embedding_model, retrieved_count, latency_ms}` | ✅ (2026-08-25) |
+| POST | `/api/v1/rag/search` | 같은 입력(+`min_score?`) → `{question, embedding_model, hits[]}` — **GPT 없이 근거 청크만** | ✅ (2026-08-25) |
+| GET | `/api/v1/rag/history?limit=` | 내 최근 질문 `[{conversation_id, message_id, question, at}]` | ✅ (2026-08-25) |
+| GET | `/api/v1/rag/conversations?limit=` | 내 대화 목록(최근 수정순) | ✅ (2026-08-25) |
+| GET | `/api/v1/rag/conversations/{id}` | 대화 상세(메시지 전체, assistant 턴에 citations) | ✅ (2026-08-25) |
+| POST | `/api/v1/rag/query/stream` | 같은 입력 → Server-Sent Events(`text/event-stream`) | ✅ (2026-08-25) |
 
-- citation: `document_id, section_id, page_start, page_end, score`.
+- **두 단계로 나뉜다**: ① 검색 = 로컬 임베딩(활성 모델) + pgvector, ② 생성 = GPT. `/search`는 ①만, `/query`는 ①+②다. 답변이 이상할 때 검색 문제인지 생성 문제인지 가르기 위해 ①을 따로 노출한다(DESIGN.md §21의 14→16 순서). `/search`는 의미 기반 문서검색 UI·관련문서 추천도 같은 결과를 쓴다.
+- citation: `index, document_id, document_name, section_id, chunk_id, page_start, page_end, score, heading_path`. **답변 본문의 `[1]` 표기가 `citations[].index`와 대응**하므로 프론트는 이 번호로 각주 링크를 만든다. 근거로 답할 수 없으면 GPT가 "제공된 문서에서는 확인할 수 없습니다"로 답하고 `citations`는 빈 배열이다(없는 내용을 만들지 않게 프롬프트에서 강제).
+- **검색 범위**: `scope` 생략 시 "내가 접근 가능한 프로젝트 전체"(dashboard/문서검색과 같은 규칙). `scope.project_ids`에 접근 권한 없는 프로젝트를 넣으면 `403`, 없는 프로젝트면 `404`. 검색 대상은 **각 문서의 현재 버전 + 활성 임베딩 모델의 벡터**뿐이다 — 구버전 청크(교정 apply로 밀려난 v1 등)와 임베딩이 없는 문서는 결과에 없다.
+- **활성 임베딩 모델이 없으면 `503`** — 질문을 문서와 같은 벡터 공간으로 만들 수 없다. 빈 결과(`200`)와 구분해야 하는 상태라 조용히 넘기지 않는다.
+- **대화(멀티턴)**: `conversation_id`를 주면 이어 붙이고 생략하면 새로 만든다. 이전 `RAG_HISTORY_TURNS`(기본 4)턴을 답변 생성 프롬프트에 넣는다. 이어지는 질문은 첫 질문의 `scope`를 그대로 물려받는다. 남의 `conversation_id`는 `403`.
+- **질문 재작성 (2026-08-25)**: 대화 이력이 있는 후속 질문은 검색 전에 독립 질문으로 재작성된다("그럼 그건 언제부터 적용돼?" → "정기 배포일을 수요일로 2주에 한 번 진행하는 방식은 언제부터 적용돼?") — 검색(임베딩+FTS)에만 쓰이고 답변 생성 프롬프트의 `question`은 원문 그대로다. 재작성 결과는 `/rag/query`의 `search_question`(원문과 같으면 `null`), `/rag/query/stream`의 `meta.search_question`으로 노출된다. `RAG_QUERY_REWRITE_ENABLED=false`로 끌 수 있다(끄면 원문으로 그대로 검색).
+- **문맥 확장**: 검색된 청크와 같은 `heading_path`(같은 조/절)의 나머지 청크를 `RAG_EXPAND_MAX_EXTRA`(기본 6)개까지 근거에 덧붙인다. 표처럼 한 조가 여러 청크로 쪼개진 경우를 위한 장치이고, `/search` 응답에서는 `expanded: true`로 구분된다.
+- **하이브리드 검색 (2026-08-25)**: 벡터 검색 + PostgreSQL 전문(FTS) 검색을 RRF(Reciprocal Rank Fusion)로 합친다(`RAG_HYBRID_ENABLED`, 기본 켜짐). FTS는 질문을 접두어(`:*`) 매칭으로 쿼리해 한국어 조사가 붙어도("배포는" → "배포:*") 걸린다. **`citations[].score`는 하이브리드 모드에서 RRF 융합 점수이지 코사인 유사도가 아니다** — 절대값이 아니라 같은 응답 안에서의 상대 순위로 봐야 한다. `min_score`(`/search`의 요청 파라미터)는 벡터 후보 단계에만 적용되는 코사인 하한이고 FTS 후보는 그 값과 무관하게 뽑힌다.
+- `GET /rag/history`·`dashboard.stats.ragToday`(§2)는 이제 실제 값이다 — `rag_messages`에서 `role='user'`인 행을 센다.
+- **SSE 스트리밍 (2026-08-25)**: `/rag/query/stream`은 `/rag/query`와 요청 바디가 동일하고, 응답만 `text/event-stream`이다. 각 이벤트는 `event: <type>\ndata: <json>\n\n` 형식.
+  - `meta` `{conversation_id, embedding_model, retrieved_count}` — 스트림 맨 처음, 검색이 끝난 시점.
+  - `delta` `{text}` — 답변 조각. 순서대로 이어 붙이면 최종 답변 본문이 된다.
+  - `citations` `{citations}` — `/rag/query`의 `citations[]`와 같은 형식. 답변 본문의 `[n]` 표기에서 뽑으므로 마지막 `delta` 다음, 한 번만 온다.
+  - `done` `{conversation_id, message_id, provider, retrieved_count, latency_ms}` — 마지막 이벤트. 여기까지 왔으면 대화/메시지가 DB에 저장 완료된 것.
+  - `error` `{detail}` — LLM 호출 자체가 실패했을 때(네트워크 오류 등). 이 이벤트 뒤로는 스트림이 끝나고 `citations`/`done`은 오지 않으며, 아무것도 저장되지 않는다.
+  - 검색/권한 오류(`404`/`403`)와 활성 임베딩 모델·LLM 설정 누락(`503`)은 스트림을 열기 전에 걸러 **평범한 HTTP 에러**로 응답한다 — SSE가 한 번 시작되면 상태코드를 더 바꿀 수 없어서다. LLM 호출 자체의 실패만 `error` 이벤트로 온다는 뜻.
 
-### 6-1. 퀴즈 (`/api/v1/quizzes`) — 2026-08-19 확정, MVP2 범위 (⏳, 엔드포인트는 방향성 초안, 착수 시 확정)
+### 6-1. 퀴즈 — 문제은행/문제집/AI 생성 (2026-08-25)
 
-RAG Retrieval Engine을 재사용해 문서 기반 문제/문제집을 생성한다. DB 설계(별도 `quiz_sets`/`quiz_items`/`quiz_attempts` 테이블 vs `ai_analysis_results` 재사용)는 미정 — 문제집이 문서와 독립적으로 수정·재응시되는 특성상 별도 테이블 쪽에 무게. 아래는 방향성만 기록.
+2026-08-19 초안(RAG 기반 자동 생성 우선 설계)을 실제 프론트 UI(`frontend/src/components/quiz/`) 기준으로 대체. CRUD 5개 테이블(`quiz_questions`/`quiz_books`/`quiz_book_questions`/`quiz_sessions`/`quiz_answers`, 마이그레이션 `b6bc43463e34`) + AI 생성 작업 테이블(`quiz_generation_jobs`, `97198d524333`). 상세는 [docs/STATUS.md](STATUS.md) 참고.
+
+문제은행:
 
 | Method | Endpoint | 결과 | 상태 |
 |---|---|---|---|
-| POST | `/api/v1/quizzes/generate` | `{scope:{project_ids[], folder_ids[], document_ids[]}, count, difficulty?}` → RAG 기반 문제 생성(정답+해설 포함) | ⏳ |
-| GET | `/api/v1/quizzes` | 문제집 목록 | ⏳ |
-| GET | `/api/v1/quizzes/{quiz_id}` | 문제집 상세(문항+정답+해설) | ⏳ |
-| PATCH | `/api/v1/quizzes/{quiz_id}` | 문제 수정/커스텀(문항 추가·수정·삭제) | ⏳ |
-| POST | `/api/v1/quizzes/{quiz_id}/attempts` | 답안 제출 → 채점 + 해설 | ⏳ |
-| GET | `/api/v1/quizzes/{quiz_id}/attempts` | 응시 히스토리 | ⏳ |
+| GET | `/api/v1/projects/{project_id}/quiz-questions` | 목록(`document_id`/`difficulty`/`type`/`review_status`/`q` 필터) | ✅ |
+| POST | `/api/v1/projects/{project_id}/quiz-questions` | 문제 직접 작성(`generation_type=MANUAL`, `review_status=DRAFT`) | ✅ |
+| PATCH | `/api/v1/quiz-questions/{question_id}` | 문제 수정 | ✅ |
+| DELETE | `/api/v1/quiz-questions/{question_id}` | 문제은행에서 완전 삭제(소속 문제집 연결도 cascade 해제) | ✅ |
+| POST | `/api/v1/projects/{project_id}/quiz-questions/generate` | AI 문제 생성 시작 → **202** + 생성 작업 | ✅ |
+| GET | `/api/v1/quiz-generation-jobs/{job_id}` | 생성 상태 폴링(본인 잡만, 남의 잡은 404) | ✅ |
+
+**AI 문제 생성은 검색이 아니라 커버리지 방식이다.** 요청은 `{document_ids[], count, types[], difficulty?, exclude_duplicates, quiz_book_id?}` — 질의(topic)를 받지 않는다. 지정 문서의 청크를 `chunk_index` 순서대로 전부 훑어 연속 배치로 나눠 출제하므로 문서 앞·중간·뒤가 모두 다뤄지고, **임베딩이 없는 문서(`CHUNKED` 상태)에서도 동작한다**(RAG 검색에는 안 보이는 문서들 — `rag_top_k` 밖 내용이 아예 출제되지 않는 문제도 함께 피한다). `count`는 문서별 청크 수에 비례 배분되고, 청크가 있는 문서는 최소 1문항을 받는다.
+
+생성된 문항은 `generation_type=AI`, `review_status=DRAFT`로 문제은행에 들어간다(검수 게이트는 없다 — DRAFT도 문제집에 편입 가능). `quiz_book_id`를 주면 생성 후 그 문제집에 순서대로 자동 편입되며, 그 문제집에 응시 이력이 있으면 `409`(아래 잠금 정책과 동일 규칙). 대상 문서에 청크가 없으면(파싱/청킹 전) 시작 시점에 `409`.
+
+폴링 응답(`QuizGenerationJobRead`)의 `created_count`는 **배치마다 커밋되므로 RUNNING 중에도 올라간다** — 진행률로 쓸 수 있다. `status=COMPLETED`인데 `error`에 값이 있으면 **부분 성공** 안내다(요청 수보다 적게 만들어진 이유: 중복/형식 오류로 제외, 일부 배치 실패). 완료·실패 시 알림함 + Web Push로 알림이 간다.
+
+문제집:
+
+| Method | Endpoint | 결과 | 상태 |
+|---|---|---|---|
+| GET | `/api/v1/projects/{project_id}/quizzes` | 문제집 목록 | ✅ |
+| POST | `/api/v1/projects/{project_id}/quizzes` | 문제집 생성 | ✅ |
+| GET / PATCH / DELETE | `/api/v1/quizzes/{quiz_book_id}` | 상세 / 설정 수정 / 삭제 | ✅ |
+| POST | `/api/v1/quizzes/{quiz_book_id}/duplicate` | 설정+문제 구성 복제(세션 없는 사본) | ✅ |
+| GET / POST | `/api/v1/quizzes/{quiz_book_id}/questions` | 소속 문제 목록(순서대로) / 문제은행에서 편입 | ✅ |
+| DELETE | `/api/v1/quizzes/{quiz_book_id}/questions/{question_id}` | 문제집에서 연결만 해제(문제은행엔 남음) | ✅ |
+
+**응시 이력(세션)이 하나라도 있는 문제집은 위 PATCH/문제 추가·삭제와 AI 생성 자동 편입이 `409`로 막힌다** — 모든 응시자가 동일 버전을 보게 하기 위함. 수정하려면 `/duplicate`로 복제 후 사본을 편집한다. 프론트가 버튼을 미리 잠글 수 있도록 `QuizBookRead.has_sessions`(불리언)를 목록/상세 응답에 함께 내려준다 — `true`면 편집 버튼을 비활성화하고 "복제해서 편집"을 유도할 것. 단 조회 시점과 수정 시점 사이에 누군가 응시를 시작할 수 있으므로 409 처리도 남겨 둬야 한다. `DELETE /quizzes/{id}`(문제집 삭제)는 잠금과 무관하게 항상 허용된다(세션/답변도 cascade 삭제).
+
+응시:
+
+| Method | Endpoint | 결과 | 상태 |
+|---|---|---|---|
+| POST | `/api/v1/quizzes/{quiz_book_id}/sessions` | 응시 시작 `{mode: study\|exam}` → 정답 없는 문제 목록 + `session_id` | ✅ |
+| POST | `/api/v1/quizzes/{quiz_book_id}/sessions/{session_id}/answers` | study 모드 즉시 채점 | ✅ |
+| POST | `/api/v1/quizzes/{quiz_book_id}/sessions/{session_id}/submit` | 최종 제출 → 점수/정답수 집계 | ✅ |
+| GET | `/api/v1/quizzes/{quiz_book_id}/sessions` | 문제집별 응시 이력(전체 사용자, 요약) | ✅ |
+| GET | `/api/v1/quizzes/{quiz_book_id}/sessions/{session_id}` | 세션 상세(오답노트, 문항별 답변 포함) | ✅ |
+| GET | `/api/v1/projects/{project_id}/quiz-sessions` | 내 응시 이력(문제집 전체 통틀어) | ✅ |
+
+`quiz_answers`는 채점에 필요한 문제 내용(본문/보기/정답/해설)을 **제출 시점에 스냅샷**으로 저장한다 — 문제은행에서 문항이 나중에 수정/삭제돼도 과거 오답노트가 깨지지 않는다. `reveal_answers=false`인 문제집은 세션 결과에서도 `correct_answer`/`explanation`이 `null`로 내려간다. `shuffle_options`는 정답 index 매핑 문제를 피하려 **백엔드가 옵션 순서를 섞지 않는다** — 프론트가 표시만 섞고 항상 원본 인덱스로 제출한다(`shuffle_questions`, 즉 문항 순서만 서버가 섞는다).
 
 ---
 
-## 7. Embedding Lab (관리자) — MVP2
+## 7. Embedding Lab (관리자) — MVP2 (2026-08-25 백엔드 구현, 프론트 미연동)
 
-| Method | Endpoint | 상태 |
-|---|---|---|
-| GET | `/api/v1/embedding/models` | ⏳ |
-| POST | `/api/v1/embedding/models/{id}/activate` | ⏳ |
-| POST | `/api/v1/embedding/models/{id}/reembed` | ⏳ |
-| GET | `/api/v1/embedding/benchmarks` | ⏳ |
-| POST | `/api/v1/embedding/benchmarks/run` | ⏳ |
-| GET | `/api/v1/embedding/benchmarks/{run_id}` | ⏳ |
+모든 엔드포인트 `require_admin`(role="admin") 필요, 아니면 `403`. 응답은 프로젝트 전체 컨벤션대로 **snake_case** — `../frontend/src/lib/types.ts`의 `EmbeddingModel`/`BenchmarkRun` 타입은 이 백엔드가 생기기 전에 camelCase로 먼저 그려둔 목업이라 아직 안 맞다(후속 프론트 작업 필요).
+
+| Method | Endpoint | 설명 | 상태 |
+|---|---|---|---|
+| GET | `/api/v1/embedding/models` | 등록된 임베딩 모델 목록 | ✅ |
+| POST | `/api/v1/embedding/models/{id}/activate` | 이 모델을 활성 모델로 전환(청킹 설정은 불변) | ✅ |
+| POST | `/api/v1/embedding/models/{id}/reembed` | 청킹은 그대로 두고 이 모델로 전체 `document_chunks` 재임베딩 → 202 `{job_id}` | ✅ |
+| GET | `/api/v1/embedding/datasets` | 벤치마크 데이터셋 목록(질문 개수 포함) | ✅ |
+| POST | `/api/v1/embedding/datasets` | 데이터셋 생성 — `{name, description?, project_id?, questions:[{question, category?, ground_truth:[{document_id, expected_snippet, page_start?}]}]}` | ✅ |
+| GET | `/api/v1/embedding/benchmarks` | 벤치마크 run 목록(모델별 결과 포함) | ✅ |
+| POST | `/api/v1/embedding/benchmarks/run` | `{dataset_id, model_ids[], chunking_config?:{strategy?, chunk_max_chars?, chunk_min_chars?, chunk_overlap_chars?, sentence_window?, breakpoint_percentile?}}` → 202 `{run_id}` | ✅ |
+| GET | `/api/v1/embedding/benchmarks/{run_id}` | run 상세(진행 상황 폴링) | ✅ |
+| POST | `/api/v1/embedding/benchmarks/{run_id}/apply` | `{model_id}` — 검증된 (청킹설정, 모델) 조합을 운영에 적용 → `{chunking_config_id, embedding_model_id}` | ✅ |
+| POST | `/api/v1/embedding/migrate` | `{document_version_ids[], force_semantic?}` — 관리자가 고른 기존 버전을 재청킹+임베딩 → 202 `{job_id}` | ✅ |
+| GET | `/api/v1/embedding/jobs/{job_id}` | reembed/migrate 작업 진행률 폴링 | ✅ |
+
+- **벤치마크는 ephemeral** — 운영 `document_chunks`/`chunk_embeddings`는 절대 건드리지 않는다. `runner.py`가 대상 문서를 (모델×청킹설정 조합마다) 인메모리로 청킹+임베딩해서 Recall@1/3/5·MRR·NDCG·latency·throughput·RAM을 계산하고 버린다. 정답(`ground_truth`)은 `section_id` FK가 아니라 `{document_id, expected_snippet}` 스니펫이다 — 재파싱마다 섹션이 통째로 교체되므로 FK는 금방 깨지고, 스니펫이면 청킹 설정이 바뀌어도 "검색된 청크에 이 문구가 포함되는지"로 계속 채점 가능하다.
+- **`apply`는 기존 문서를 건드리지 않는다** — `chunking_configs`/`embedding_models`의 활성값만 바꿔 "앞으로 신규 업로드/수동 마이그레이션이 참조할 기본값"을 정할 뿐이다. 기존에 이미 처리된 문서(특히 heading 없이 flat하게 청킹된 과거 문서)를 새 설정으로 다시 돌리려면 `/migrate`로 관리자가 대상 `document_version_id`를 직접 골라야 한다(자동 일괄 처리 없음). `force_semantic=true`면 heading 유무 자동 판정을 무시하고 semantic 청킹을 강제한다.
+- **`chunking_configs`**는 `embedding_models.is_active`와 대칭인 별도 테이블 — 모델 활성화(`/activate`)가 청킹 설정까지 같이 바꾸는 부작용을 막기 위해 분리했다.
+- **`chunk_min_chars`(2026-08-25 추가, 기본 300)** — structure 청킹의 **하한**. 같은 heading 아래 인접 본문 섹션을 이 길이까지 뭉친다(0이면 뭉치지 않음 = 구버전 동작). 이걸 넣기 전엔 섹션 1개 = 청크 1개라 회의록 불릿 한 줄(9자)이 검색 단위가 됐다 — 배경·실측치는 DESIGN.md §18 "Chunking 하한", 적용 범위는 [docs/STATUS.md](STATUS.md). `min_chars` 키가 없는 과거 run 스냅샷을 `apply`하면 그 run이 뭉치지 않고 채점됐다는 뜻이므로 `0`으로 되살린다.
+- `POST /api/v1/rag/query`(§6)가 여기서 만든 `chunk_embeddings`(실 벡터)를 소비한다 — **2026-08-25 구현 완료.** Embedding Lab은 그 검색 인프라(모델·청킹 설정·재임베딩)를 준비하는 쪽이다.
 
 ---
 

@@ -155,7 +155,7 @@ AI/Embedding: `openai`, `torch`, `transformers`, `sentence-transformers`, `accel
 
 **모델 선정 가중치(예)**: Retrieval Accuracy 60% · Embedding Performance 15% · Query Latency 10% · RAM/VRAM 10% · 운영 편의성 5%. 가장 빠른 모델이 아니라 **검색 정확도**가 가장 중요.
 
-**공정성 원칙:** 모델 비교 시 Document/Parser/Section/Chunk/Query/Similarity/Top-K를 동일하게 유지하고 **Embedding Model만** 바꾼다.
+**공정성 원칙:** 모델 비교 시 Document/Parser/Section/Chunk/Query/Similarity/Top-K를 동일하게 유지하고 **Embedding Model만** 바꾼다. (2026-08-25) EmbeddingLab에서 청킹 파라미터(전략/크기/overlap/문장윈도우/breakpoint percentile)도 실험 변수로 열어두면서, 벤치마크 run은 (모델 × 청킹설정) 조합 단위로 실행 — "고정" 대상에 청킹설정도 매 run의 스냅샷(`benchmark_runs.chunking_config`)으로 명시적으로 기록해 두 변수를 동시에 흔들 때도 어떤 조합이었는지 재현 가능하게 한다.
 
 ---
 
@@ -295,17 +295,34 @@ projects → folders → documents → document_versions → document_sections �
 
 **Document Parser**: 파일 종류별 Adapter — `PDFParser / HWPXParser / DOCXParser / XLSXParser / PPTXParser`. 초기엔 PDF·HWPX·DOCX부터. 결과는 **Unified Document**(Metadata + Section{Title, Content, Page, Order} + Table)로 통일 → AI 기능이 파일 포맷을 몰라도 됨. **`PPTXParser`는 2026-08-19 로드맵 백로그로 확정** — 슬라이드를 Section 단위(슬라이드=heading, 슬라이드 내 텍스트박스=body)로 매핑하고, `correction_service`도 PPTX용 텍스트 치환을 추가해 다른 포맷과 동일하게 교정 적용까지 지원하는 게 목표.
 
-**Chunking**: 단순 500자 분할이 아니라 제목/문단/조항/Section 구조를 우선 보존.
+**Chunking (구조화 문서)**: 단순 500자 분할이 아니라 제목/문단/조항/Section 구조를 우선 보존. 회사 내규처럼 heading이 있는 문서에 적용 — heading은 chunk로 만들지 않고 breadcrumb(`chunk_metadata.heading_path`)로만 쓴다.
 
-**Local Embedding Pipeline**: `Chunk → Active Local Embedding Model → Embedding → chunk_embeddings → pgvector`.
+**Chunking 하한 = 짧은 섹션 병합 (2026-08-25)**: 위 방식의 초기 구현은 **섹션 1개 = 청크 1개**였는데, 이게 실측에서 RAG의 1차 병목으로 드러났다. `document_sections`는 파서/교정 apply를 위한 fine-grained 단위(문단 1개 = 섹션 1개)라 회의록·PPT처럼 불릿이 한 줄인 문서에서는 `'앱 업데이트 완료'`(9자)가 섹션 하나이고, 그 경계를 그대로 청크 경계로 승격시키면 **단어 조각이 RAG 검색 단위**가 된다. 실측(운영 DB): structure 청크의 83%가 섹션 1개 그대로 통과, 그중 73%가 50자 미만, 길이 중간값 24자 — 같은 데이터에서 semantic 경로는 818자. `split_to_size`는 상한(`chunk_max_chars`)만 있고 **하한이 없어** 이걸 막지 못했다.
+
+- **원인은 파서가 아니다** — 원문 문단이 실제로 한 줄이고, 섹션 정밀도 자체는 `correction_service`의 원문 위치 추적(run/텍스트노드 단위 치환)이 요구하는 것이다. 파서를 바꾸면 교정 적용이 깨진다. 그래서 **청커에서 뭉친다**.
+- **방식**: `chunk_min_chars`(기본 300) — 같은 `heading_path` + 같은 `section_type`인 인접 본문 섹션을 이 길이에 닿을 때까지 `\n`으로 이어붙여 한 청크로 만든다. 새 heading이 시작되면 조항 경계를 넘지 않도록 끊고, 표(table)와 문단(paragraph)은 섞지 않는다. 병합 결과가 `chunk_max_chars`를 넘으면 기존 `split_to_size` 안전장치가 그대로 적용된다. 병합된 청크는 `chunk_metadata.source_section_ids`에 원 섹션들을 남기고(semantic 청커와 같은 규칙), `bbox`는 섹션 1개일 때만 유지한다(여러 섹션을 합치면 한 좌표 영역을 가리키지 않으므로).
+- **효과**(운영 데이터 전체 재청킹, in-memory 비교): 청크 343→108개, 길이 중간값 24→316자, 50자 미만 73%→12%(semantic의 13%와 동등). `chunk_min_chars=0`은 구버전 동작과 **바이트 단위로 동일**함을 저장된 청크 대조로 확인.
+- 벤치마크에서도 모델과 나란히 실험 가능한 변수다(`POST /embedding/benchmarks/run`의 `chunking_config.chunk_min_chars`).
+
+**Chunking (비구조화 문서, 2026-08-25)**: txt/hwpx, 스타일 없는 docx 등 파서가 heading을 하나도 못 뽑는 자유 형식 문서는 위 방식이 무력화된다(전 구간이 flat body라 문단마다 독립적으로 잘려 과도하게 파편화됨) — 대신 **의미 기반(semantic) 청킹**으로 분기한다: 본문 문장을 N개(`chunk_semantic_sentence_window`, 기본 3) 단위 슬라이딩 윈도우로 묶어 Active Embedding Model로 임베딩하고, 인접 윈도우 간 코사인 거리 분포의 상위 percentile(`chunk_semantic_breakpoint_percentile`, 기본 95)을 넘는 지점을 청크 경계로 삼는다(LlamaIndex `SemanticSplitterNodeParser` 방식). 경계 판정을 문서에 heading이 있는지로만 스위치하므로, 파서마다 제각각인 heading 추출 휴리스틱 차이를 우회할 수 있다. `chunk_metadata.chunking_strategy`(`"structure"`|`"semantic"`)로 어느 경로를 탔는지 남긴다.
+
+**Local Embedding Pipeline**: `Chunk → Active Local Embedding Model → Embedding → chunk_embeddings → pgvector`. 신규 업로드는 파싱→청킹 뒤 자동으로 이 단계까지 이어진다(`CHUNKED→EMBEDDING→READY`) — 활성 모델이 없거나 임베딩 자체가 실패해도 `CHUNKED`로 남을 뿐 문서 처리 실패(`FAILED`)로 취급하지 않는다(임베딩 인프라 미비가 오탈자 검증 등 이미 되는 기능까지 막으면 안 되므로).
+
+**EmbeddingLab 벤치마크(2026-08-25)**: §9의 벤치마크 설계에 "청킹 전략/파라미터"도 모델과 나란히 실험 가능한 변수로 추가했다 — 청킹은 **인메모리로 계산했다 버리는 ephemeral 방식**이라 운영 `document_chunks`/`chunk_embeddings`는 절대 건드리지 않는다. 검증된 (청킹설정, 모델) 조합은 "운영 적용" 액션으로 `chunking_configs`/`embedding_models`의 활성값만 바꾸고, 기존에 이미 처리된 문서는 자동으로 재처리하지 않는다 — 관리자가 EmbeddingLab에서 대상을 수동으로 골라 마이그레이션(재청킹+재임베딩)해야 한다.
 
 **Query Embedding**: `Question → 동일 Active Embedding Model → Query Vector → pgvector Similarity Search`. **문서와 Query는 반드시 동일 모델 사용.**
 
 **② AI 오탈자 검증(첫 AI 모듈, 초기 MVP)**: `Document → GPT → Structured Result → ai_analysis_results → Frontend`. 검사 항목: 오탈자, 맞춤법, 띄어쓰기, 비문, 문법, 중복 표현, 용어 통일, 어색한 표현. 화면은 좌측 Document / 우측 AI Review(기존→제안, [적용]/[무시]).
 
 **③ RAG Chat**: `Question → Local Query Embedding → Project/Folder Filter → pgvector Search + Keyword Search → Top-K → GPT → Answer + Citation`.
-- **Hybrid Search**: Vector Search + PostgreSQL Full Text Search 결합(의미 검색 + 정확한 용어 검색).
+- **Hybrid Search (2026-08-25 구현)**: Vector Search + PostgreSQL Full Text Search를 **RRF**(Reciprocal Rank Fusion, `Σ 1/(k+rank)`, k=60)로 결합한다. 코사인 유사도와 `ts_rank_cd`는 스케일이 전혀 달라 값을 직접 더하는 가중합은 튜닝이 불안정해서, 값 대신 등수만 쓰는 RRF를 채택했다. FTS는 `document_chunks.content_tsv`(`to_tsvector('simple', content)` STORED 생성 컬럼 + GIN 인덱스)를 쓴다. **'simple' config는 한국어 형태소 분석을 하지 않는다** — 실측으로 확인된 문제: `plainto_tsquery`(정확 토큰 일치)로는 "배포는"(질문, 조사 붙음)과 "배포"(본문)가 다른 lexeme이라 자연어 질문이 거의 매칭되지 않았다. **접두어(`:*`) OR 매칭**으로 바꿔 해결 — 질문을 토큰화해 `배포:* | 정기:* | ...`로 쿼리하면 "배포는"도 걸린다. `RAG_HYBRID_ENABLED`로 벡터 단독 모드 롤백 가능.
 - 출처는 `document_id, section_id, page_start, page_end` 기준으로 생성.
+- **검색/생성 계층 분리 (2026-08-25 구현)**: `Retriever`(①검색, 자연어를 만들지 않고 근거 청크만) / `RagService`(①+② 조립·이력) / `LLMProvider.answer_with_context`(②생성)로 나눴다. 답변이 이상할 때 **검색이 엉뚱한 걸 가져왔는지 GPT가 잘 가져온 걸 잘못 읽었는지** 가르기 위한 분리이고, §21의 "14. Vector Search를 GPT 없이 먼저 검증 → 16. RAG" 순서를 코드 구조로 굳힌 것이다(`POST /rag/search`가 ①만 노출). 이 Retriever는 관련문서 추천(⑤)·규정검증(⑦)·퀴즈 생성(③-1)이 재사용한다.
+- **검색 대상 불변식 두 개** — 빠뜨리면 에러 없이 조용히 틀린다: (1) `embedding_model_id = 활성 모델`(질문과 문서가 같은 벡터 공간이어야 한다, §18 Query Embedding), (2) `document_versions.id = documents.current_version_id`(교정 apply로 새 버전이 생겨도 구버전 청크는 남아 있으므로, 이 조건이 없으면 오탈자가 있던 v1이 검색된다).
+- **할루시네이션 방지**: 근거를 `[n]`으로 번호 매겨 넣고 인용 표기를 강제하며, 근거에 없으면 "확인할 수 없습니다"로 답하게 프롬프트에서 못 박는다. 이전 대화는 근거 블록과 **분리**해 넣는다 — 섞으면 모델이 지난 답변을 "문서에서 확인된 사실"로 재인용한다.
+- **멀티턴**: `rag_conversations` 1:N `rag_messages`. 이전 N턴은 GPT 프롬프트에 넣는다. 검색 쿼리는 아래 질문 재작성을 거친다.
+- **질문 재작성 (2026-08-25 구현)**: 대명사만 남은 후속 질문("그건 왜?")을 원문 그대로 검색하면 이전 대화의 실제 주제를 못 잡는다. 대화 이력이 있을 때만 `LLMProvider.rewrite_query(question, history)`로 후속 질문을 독립 질문으로 재작성해 그 결과만 검색(임베딩+FTS)에 쓴다 — **답변 생성 프롬프트는 원래 질문 그대로**다(이미 history 블록이 따로 들어가 GPT가 직접 문맥을 볼 수 있어 재작성이 불필요). 재작성 실패는 원래 질문으로 안전하게 폴백해 검색 자체를 막지 않는다. `RAG_QUERY_REWRITE_ENABLED`로 롤백 가능.
+- **SSE 스트리밍 (2026-08-25 구현, `POST /rag/query/stream`)**: 검색/권한 오류(404/403/503)는 스트림을 열기 전에 끝낸다 — `RagService.query_stream_prepare()`가 검색·대화 로딩·LLM 설정 확인까지 마치고 나서야 라우터가 `StreamingResponse`를 연다(스트림이 열리면 상태코드를 더 못 바꾸므로). LLM 호출 자체의 실패만 `error` SSE 이벤트로 알린다. citations는 `/rag/query`처럼 JSON 스키마로 강제하지 못해(스트리밍 중엔 완결된 JSON을 못 받는다) 답변 본문에 이미 박히는 `[n]` 표기를 스트림 종료 후 정규식으로 추출한다(`extract_cited_indexes`). `LLMProvider.answer_with_context_stream()`을 새 인터페이스로 추가 — 설정 오류(API 키 없음)는 이 메서드 호출 시점에 즉시 던지고(제너레이터 본문이 아니라), 실제 HTTP 스트리밍은 별도 제너레이터로 감싼다.
 - **③-1 퀴즈 기능 (2026-08-19 확정, MVP2 범위)**: 같은 Retrieval Engine 위에 얹는다 — `프로젝트/문서 범위 지정 → RAG Retrieval → GPT가 문제(객관식/주관식) + 정답 + 해설 생성 → 문제집으로 저장`. 사용자는 생성된 문제를 수정하거나, 직접 문제를 추가(커스텀/직접 생성)할 수 있고, 응시 이력(히스토리: 제출한 답, 채점 결과)도 남는다. DB 설계는 착수 시점에 확정 — `ai_analysis_results`를 재사용할지, 별도 `quiz_sets`/`quiz_items`/`quiz_attempts` 테이블을 새로 둘지는 미정(문제집이 문서와 독립적으로 수정·재응시되는 게 핵심이라 별도 테이블 쪽에 무게).
 
 **④ 문서 자동 분류**: `Document → 대표 Section → GPT → Classification → 사용자 확인 → Metadata 저장`. 결과: 문서 유형/카테고리/태그.
