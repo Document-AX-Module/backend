@@ -386,6 +386,11 @@ Document Core — 업로드(멀티파트) → 파싱 → 청킹 파이프라인,
 ### `GET /api/v1/documents/{document_id}/versions` — 버전 목록
 **Response `200`** → `DocumentVersionRead[]` (`version_no` 내림차순, 최신 우선). **`404`**: 문서 없음.
 
+### `POST /api/v1/documents/{document_id}/versions` (multipart) — 새 버전 추가
+**역할**: 기존 문서에 새 버전(v2+)을 추가한다. `POST /projects/{project_id}/documents`와 달리 Document는 새로 만들지 않고, 이 문서의 최신 `version_no + 1`로 버전만 하나 추가한 뒤 `current_version_id`를 갱신한다. 확장자/용량 검증은 최초 업로드와 동일. 저장 직후 백그라운드로 파싱이 시작된다.
+**Request**: `file`(멀티파트, 필수)뿐이다 — `folder_id`/`name`/`description`은 Document 소속이라 여기서 받지 않는다.
+**Response `202`** → `DocumentVersionRead`. **`400`**: 지원하지 않는 확장자/용량 초과. **`404`**: 문서 없음.
+
 ### `GET /api/v1/documents/{document_id}/download` — 원본 파일 다운로드
 **역할**: 파싱 결과가 아니라 **업로드했던 원본 바이트**를 그대로 내려준다. 현재 버전 기준.
 **Response `200`**: 파일 스트림(업로드 당시 파일명·MIME). **`404`**: 문서 없음 또는 저장 파일 없음.

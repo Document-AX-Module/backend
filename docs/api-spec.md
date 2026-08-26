@@ -99,6 +99,7 @@ provider 추상화(`app/services/auth_providers.py`): `mock`(dev 전용, 크리�
 | `project.member_invite` / `.member_remove` | 멤버 초대/제거 (2026-08-20) | 프로젝트 · 프로젝트 |
 | `folder.create` / `.update` / `.delete` | 폴더 생성/수정·이동·순서변경/삭제 | 폴더 · 폴더 · 삭제 |
 | `document.upload` / `.delete` | 문서 업로드/삭제 | 업로드 · 삭제 |
+| `document.version_add` | 기존 문서에 새 버전 추가 (2026-08-26) | 버전 |
 | `document.move` / `.folder_change` | 문서 프로젝트간 이동/폴더변경 (2026-08-20) | 문서 · 문서 |
 | `analysis.start` / `.complete` / `.fail` | (모듈명) 시작/완료/실패 | 오타 · 규정 · 분류 · 추천 |
 
@@ -169,6 +170,7 @@ provider 추상화(`app/services/auth_providers.py`): `mock`(dev 전용, 크리�
 | DELETE | `/api/v1/documents/{doc_id}` | 삭제(파일 정리 포함, 204) | ✅ |
 | GET | `/api/v1/documents/{doc_id}/download` | 원본 다운로드 | ✅ |
 | GET | `/api/v1/documents/{doc_id}/versions` | 버전 목록 | ✅ |
+| POST | `/api/v1/documents/{doc_id}/versions` (multipart) | 기존 문서에 새 버전(v2+) 추가 → 202 `version`. Document는 새로 만들지 않음 | ✅ (2026-08-26) |
 | GET | `/api/v1/versions/{version_id}` | 버전 상세 | ✅ |
 | GET | `/api/v1/versions/{version_id}/status` | 처리상태 폴링 `{status, progress}` | ✅ |
 | GET | `/api/v1/versions/{version_id}/sections` | 파싱된 Section(계층, bbox meta) | ✅ |
