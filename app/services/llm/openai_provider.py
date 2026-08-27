@@ -7,6 +7,7 @@ from collections.abc import Iterable, Iterator, Sequence
 import httpx
 
 from app.services.llm.base import (
+    EssayGrade,
     LLMConfigError,
     LLMError,
     ProofreadFinding,
@@ -15,16 +16,20 @@ from app.services.llm.base import (
     RagContext,
 )
 from app.services.llm.prompts import (
+    ESSAY_GRADING_SYSTEM,
     KNOWN_CATEGORIES,
     QUERY_REWRITE_SYSTEM,
     RAG_SYSTEM,
     RAG_SYSTEM_STREAM,
+    SHORT_ANSWER_JUDGE_SYSTEM,
+    essay_grading_user_message,
     proofread_batch_system,
     proofread_system,
     query_rewrite_user_message,
     quiz_system,
     quiz_user_message,
     rag_user_message,
+    short_answer_judge_user_message,
 )
 
 logger = logging.getLogger(__name__)
@@ -248,6 +253,32 @@ class OpenAILLMProvider:
                 )
             )
         return drafts
+
+    def grade_essay(
+        self, *, question: str, model_answer: str, rubric: str, user_answer: str
+    ) -> EssayGrade:
+        user = essay_grading_user_message(
+            question=question, model_answer=model_answer, rubric=rubric, user_answer=user_answer
+        )
+        data = self._load_json(self._chat(ESSAY_GRADING_SYSTEM, user))
+
+        raw_score = data.get("score")
+        try:
+            score = min(100.0, max(0.0, float(raw_score)))
+        except (TypeError, ValueError):
+            raise LLMError(f"서술형 채점 응답의 score 가 숫자가 아닙니다: {raw_score!r}") from None
+        feedback = str(data.get("feedback", "")).strip()
+        return EssayGrade(score=score, feedback=feedback)
+
+    def judge_short_answer(self, *, question: str, correct_answer: str, user_answer: str) -> bool:
+        user = short_answer_judge_user_message(
+            question=question, correct_answer=correct_answer, user_answer=user_answer
+        )
+        data = self._load_json(self._chat(SHORT_ANSWER_JUDGE_SYSTEM, user))
+        raw = data.get("correct")
+        if isinstance(raw, bool):
+            return raw
+        return str(raw).strip().lower() == "true"
 
     # ── 내부 ──
 

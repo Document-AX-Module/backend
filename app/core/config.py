@@ -105,6 +105,12 @@ class Settings(BaseSettings):
     quiz_gen_batch_max_chars: int = 6000   # 배치 1개의 근거 총량 상한(프롬프트 길이/비용 억제)
     quiz_gen_concurrency: int = 4          # 배치 병렬 호출 수(proofread_batch_concurrency 와 같은 취지)
     quiz_gen_avoid_sample: int = 50        # 중복 회피용으로 프롬프트에 넣을 기존 문항 수 상한
+    # 단답형 채점: 정규화 후에도 불일치하면 활성 임베딩 모델로 코사인 유사도를 보고 유사도 점수 애매하면 GPT 채점
+    quiz_short_answer_similarity_high: float = 0.90
+    quiz_short_answer_similarity_low: float = 0.60
+    # 마감 임박 리마인더
+    quiz_due_reminder_window_hours: int = 24
+    quiz_due_reminder_interval_seconds: int = 3600
 
     # ── Web Push (VAPID) ──
     vapid_public_key: str | None = None

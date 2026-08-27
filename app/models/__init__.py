@@ -27,6 +27,7 @@ from app.models.project_member import ProjectMember
 from app.models.push_subscription import PushSubscription
 from app.models.quiz_answer import QuizAnswer
 from app.models.quiz_book import QuizBook
+from app.models.quiz_book_assignee import QuizBookAssignee
 from app.models.quiz_book_question import QuizBookQuestion
 from app.models.quiz_generation_job import QuizGenerationJob
 from app.models.quiz_question import QuizQuestion
@@ -60,6 +61,7 @@ __all__ = [
     "TextProofreadJob",
     "QuizQuestion",
     "QuizBook",
+    "QuizBookAssignee",
     "QuizBookQuestion",
     "QuizSession",
     "QuizAnswer",
