@@ -20,7 +20,10 @@ from app.models.document_section import DocumentSection
 from app.models.document_version import DocumentVersion
 from app.models.embedding_job import EmbeddingJob
 from app.models.embedding_model import EmbeddingModel
+from app.models.exchange_rate_cache import ExchangeRateCache
 from app.models.folder import Folder
+from app.models.llm_usage_log import LLMUsageLog
+from app.models.model_price_cache import ModelPriceCache
 from app.models.notification import Notification
 from app.models.project import Project
 from app.models.project_member import ProjectMember
@@ -68,4 +71,7 @@ __all__ = [
     "QuizGenerationJob",
     "RagConversation",
     "RagMessage",
+    "LLMUsageLog",
+    "ExchangeRateCache",
+    "ModelPriceCache",
 ]

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.core.database import SessionLocal
+from app.core.timeutil import format_kst
 from app.repositories.quiz_book_repository import QuizBookRepository
 from app.services.notification_service import NotificationType, notification_service_for
 
@@ -27,7 +28,7 @@ def send_due_reminders(db: Session, settings: Settings) -> int:
             assignee.user_id,
             type=NotificationType.QUIZ_DUE_SOON,
             title=f"'{book.title}' 응시 마감이 얼마 남지 않았습니다",
-            body=f"마감: {book.due_at:%Y-%m-%d %H:%M}",
+            body=f"마감: {format_kst(book.due_at)}",
             url=f"/quiz/{book.id}/take",
             meta={
                 "quiz_book_id": book.id,

@@ -11,6 +11,7 @@ from typing import NamedTuple
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_current_user
 from app.core.config import Settings, get_settings
 from app.core.database import get_db
 from app.models.project import VISIBILITY_PUBLIC
@@ -49,6 +50,7 @@ from app.services.activity_service import Action, ActivityService, get_activity_
 from app.services.embedding.base import EmbeddingError
 from app.services.embedding.factory import get_embedding_provider
 from app.services.llm import LLMError, LLMProvider, get_llm_provider
+from app.services.llm_usage_service import usage_sink
 
 logger = logging.getLogger(__name__)
 
@@ -711,6 +713,7 @@ def get_quiz_service(
     db: Session = Depends(get_db),
     activity: ActivityService = Depends(get_activity_service),
     settings: Settings = Depends(get_settings),
+    current_user: User = Depends(get_current_user),
 ) -> QuizService:
     return QuizService(
         QuizQuestionRepository(db),
@@ -722,5 +725,9 @@ def get_quiz_service(
         ProjectRepository(db),
         UserRepository(db),
         settings,
-        get_llm_provider(settings),
+        # project_id 는 요청마다 어느 quiz book 을 채점하는지에 따라 달라지는데 provider는
+        # 요청당 한 번만(DI 시점) 만들어져 여기선 알 수 없다 — user_id만 채우고 None으로 둔다.
+        get_llm_provider(
+            settings, on_usage=usage_sink(db, user_id=current_user.id, project_id=None)
+        ),
     )

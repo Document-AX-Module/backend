@@ -11,6 +11,7 @@ from fastapi import (
 )
 
 from app.api.deps import get_current_user, require_project_access
+from app.core.timeutil import format_kst
 from app.models.project import Project
 from app.models.quiz_book import QuizBook
 from app.models.quiz_generation_job import QuizGenerationJob
@@ -309,7 +310,7 @@ def list_quiz_books(
 def _notify_quiz_assigned(
     notifications: NotificationService, book: QuizBookRead, user_ids: list[int]
 ) -> None:
-    body = f"마감: {book.due_at:%Y-%m-%d %H:%M}" if book.due_at else None
+    body = f"마감: {format_kst(book.due_at)}" if book.due_at else None
     for user_id in user_ids:
         notifications.notify(
             user_id,

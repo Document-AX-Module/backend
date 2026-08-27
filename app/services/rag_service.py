@@ -36,6 +36,7 @@ from app.services.llm.base import (
     strip_confidence_marker,
 )
 from app.services.llm.factory import get_llm_provider
+from app.services.llm_usage_service import usage_sink
 from app.services.project_service import ProjectService, get_project_service
 from app.services.rag.context import build_contexts
 from app.services.rag.retriever import RetrievalResult, RetrievedChunk, Retriever
@@ -181,8 +182,15 @@ class RagService:
 
         project_ids, folder_ids, accessible = self._resolve_scope(scope, user)
         history = self._history(conversation)
-        provider = get_llm_provider(self.settings)
-        # 검색에만 쓰는 재작성 
+        provider = get_llm_provider(
+            self.settings,
+            on_usage=usage_sink(
+                self.db,
+                user_id=user.id,
+                project_id=project_ids[0] if len(project_ids) == 1 else None,
+            ),
+        )
+        # 검색에만 쓰는 재작성
         search_question = self._rewrite_for_search(question, history, provider)
 
         result = self.retriever.retrieve(
@@ -285,7 +293,14 @@ class RagService:
 
         project_ids, folder_ids, accessible = self._resolve_scope(scope, user)
         history = self._history(conversation)
-        provider = get_llm_provider(self.settings)
+        provider = get_llm_provider(
+            self.settings,
+            on_usage=usage_sink(
+                self.db,
+                user_id=user.id,
+                project_id=project_ids[0] if len(project_ids) == 1 else None,
+            ),
+        )
         search_question = self._rewrite_for_search(question, history, provider)
 
         result = self.retriever.retrieve(

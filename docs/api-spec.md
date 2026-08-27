@@ -394,3 +394,24 @@ Document Core(검색·섹션·교정 결과 등)를 이 백엔드 밖의 다른 
 | GET | `/api/v1/search?q=` | Topbar 전역 빠른검색(문서·프로젝트 키워드) | ⏳ |
 
 - 백엔드 OpenAPI: `/openapi.json` (+ Swagger `/docs`) 자동 제공 → 프론트 타입 대조에 활용.
+
+---
+
+## 13. 관리자 AI 운영 대시보드 (`/api/v1/admin`) — 2026-08-27 구현
+
+모든 엔드포인트 `require_admin`(role="admin") 필요, 아니면 `403`. §7 Embedding Lab과 같은 패턴. 프론트 미연동.
+
+| Method | Endpoint | 설명 | 상태 |
+|---|---|---|---|
+| GET | `/api/v1/admin/usage/summary?period=day\|month\|year` | 토큰 사용량/추정비용 집계(기능별/일별) | ✅ |
+| GET | `/api/v1/admin/usage/logs?feature=&status=&page=&size=` | LLM 호출 성공/실패 로그 원본 (페이지네이션) | ✅ |
+| GET | `/api/v1/admin/billing/summary` | AI API 비용 요약(USD/KRW) — 실제 청구액(가능하면) + 로컬 추정치 | ✅ |
+| GET | `/api/v1/admin/search/keywords?period=&top=` | RAG 챗봇 질문 검색 키워드 순위(형태소 분석) | ✅ |
+| GET | `/api/v1/admin/rag/logs?user_id=&page=&size=` | 검색-답변 로그(전체 사용자, 질문+답변+근거) | ✅ |
+
+- **토큰비 + 성공/실패 로그를 한 테이블(`llm_usage_logs`)로 통합**했다 — proofread/RAG답변/RAG질문재작성/퀴즈생성/퀴즈채점이 전부 `OpenAILLMProvider._chat()`/`_chat_stream()` 두 곳만 거치므로, 그 지점 하나에서 `on_usage` 콜백(호출부가 자기 user_id/project_id를 붙임)으로 성공/실패 여부·토큰 수·지연시간을 기록한다. 실패해도 원래 LLM 호출 자체는 절대 깨지지 않는 best-effort. **주의**: 이 로그는 우리가 계측을 시작한 시점부터만 쌓이므로 `by_feature`/`status_counts`(기능별 분해·성공/실패)는 항상 이 값을 쓰지만, "총 호출/총 토큰/평균" 같은 헤드라인 숫자는 아래처럼 가능하면 실제 API 값으로 대체한다.
+- **검색-답변 로그는 새 테이블이 필요 없었다** — `rag_messages`(§6)에 질문/답변/citations/provider/latency가 이미 다 있어, 관리자용 전체-사용자 페이지네이션 조회만 추가했다.
+- **비용/토큰 집계는 가능하면 OpenAI Admin API 실제 값, 없으면 로컬 추정치**(`app/services/llm_usage_service.usage_summary_from_api()` → 실패 시 `usage_summary()`로 폴백, 응답의 `source`/`cost_source` 필드로 어느 쪽인지 표시): Costs API(`/organization/costs`)는 금액만, Usage API(`/organization/usage/completions`)는 모델별 `num_model_requests`/`input_tokens`/`output_tokens`만 주므로 — 둘을 **날짜로 매칭해 합쳐야** "총 호출/총 토큰/평균 토큰/평균 비용"이 전부 정확해진다(2026-08-27, 실제 Admin 키로 두 API 스키마 모두 검증). 단가(litellm 가격표, 아래 참고)는 이 값들이 둘 다 없을 때의 폴백 계산에만 쓰인다. **주의**: 이 실제 값은 "이 앱의 사용량"이 아니라 "이 OpenAI 조직/키 전체의 사용량"이다 — 같은 키를 다른 곳에서도 쓰면 로컬 `llm_usage_logs`와 총량이 다를 수 있다.
+- Admin API 키(`OPENAI_ADMIN_API_KEY`)가 없거나 호출이 실패하면 `usage/summary`는 `source:"estimated"`, `billing/summary`는 `actual_available:false`+`cost_source:"estimated"`로 조용히 로컬 추정치만 응답한다(기능은 정상 동작). 단가 자체는 하드코딩이 아니라 litellm이 공개 유지하는 가격표(JSON)를 `app/services/llm_pricing.py`가 받아와 캐싱해 쓴다 — 모델이 바뀌어도 코드 수정이 필요 없다. USD→KRW 환율은 무료 환율 API를 6시간 TTL로 캐싱.
+- **검색 키워드 순위**는 `kiwipiepy` 형태소 분석(명사만 추출)으로 만든다 — 원문 완전일치 집계는 조사 차이로 같은 질문도 다른 키워드로 갈라져 순위가 무의미해진다.
+- 상세 설계 배경/검증 내역은 [docs/STATUS.md](STATUS.md).

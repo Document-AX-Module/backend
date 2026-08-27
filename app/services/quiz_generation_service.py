@@ -42,6 +42,7 @@ from app.services.activity_service import (
 )
 from app.services.llm import LLMError
 from app.services.llm.factory import get_llm_provider
+from app.services.llm_usage_service import usage_sink
 from app.services.notification_service import (
     NotificationType,
     notification_service_for,
@@ -226,7 +227,10 @@ def run_quiz_generation_task(job_id: int) -> None:
             )
 
         try:
-            provider = get_llm_provider(settings)
+            provider = get_llm_provider(
+                settings,
+                on_usage=usage_sink(db, user_id=job.user_id, project_id=job.project_id),
+            )
             job.provider = provider.name
 
             loaded = _load_documents(

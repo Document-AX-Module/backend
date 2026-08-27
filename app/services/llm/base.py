@@ -52,6 +52,20 @@ class EssayGrade:
 
 
 @dataclass
+class LLMUsageEvent:
+    """OpenAI 호출 1건의 계측 결과"""
+
+    feature: str
+    model: str
+    status: str  # "success" | "fail"
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+    latency_ms: float | None = None
+    error_message: str | None = None
+
+
+@dataclass
 class QuizDraft:
     """LLM이 만든 문항 초안 1개. 아직 검증 전이라 그대로 DB에 넣지 않는다.
 

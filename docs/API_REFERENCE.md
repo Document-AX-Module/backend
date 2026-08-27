@@ -8,6 +8,7 @@
 > **⏳ 예정** 섹션은 아직 스키마가 확정되지 않은 설계 초안이다.
 >
 > **갱신 지연 주의(2026-08-20)**: 이후 추가된 것 중 멤버/초대(§4)와 알림·push(§11)는 손으로 반영했지만, `GET /mypage/summary`, `GET /documents/search`, `GET /documents/{id}/diff`, `PATCH /documents/{id}/move`, `PATCH /projects/{id}/visibility`, `PATCH /folders/{id}/reorder`는 **아직 이 문서에 없다** — 그 계약은 [api-spec.md](api-spec.md)와 실행 중인 서버의 `/docs`를 본다.
+> **갱신 지연 추가(2026-08-27)**: 퀴즈(`/quiz`), RAG 챗봇(`/rag`), Embedding Lab(`/embedding`), 그리고 신규 관리자 AI 운영 대시보드(`/admin`, api-spec.md §13)도 이 문서에는 아직 없다 — 계약은 api-spec.md와 실행 중인 서버의 `/docs`(Swagger)를 본다.
 
 ## 공통 규약
 
