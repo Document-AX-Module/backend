@@ -145,7 +145,7 @@ class QuizBookAssigneeRead(BaseModel):
     user_id: int
     user_name: str | None = None
     user_email: str | None = None
-    assigned_at: datetime = Field(validation_alias="created_at")
+    assigned_at: datetime
 
 
 class QuizBookRead(BaseModel):

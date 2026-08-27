@@ -316,7 +316,7 @@ def _notify_quiz_assigned(
             type=NotificationType.QUIZ_ASSIGNED,
             title=f"'{book.title}' 퀴즈가 배정되었습니다",
             body=body,
-            url=f"/projects/{book.project_id}/quizzes/{book.id}",
+            url=f"/quiz/{book.id}/take",
             meta={"quiz_book_id": book.id, "project_id": book.project_id},
         )
 
@@ -330,7 +330,10 @@ def _notify_quiz_assigned(
     responses={
         **AUTH_RESPONSES,
         404: {"description": "프로젝트 없음"},
-        400: {"description": "assignee_user_ids 중 이 프로젝트의 활성 멤버가 아닌 사용자가 있음"},
+        400: {
+            "description": "assignee_user_ids 중 지정할 수 없는 사용자가 있음"
+            "(비공개/초대 프로젝트: 활성 멤버가 아님, 공개 프로젝트: 존재하는 활성 사용자가 아님)"
+        },
         **FORBIDDEN_RESPONSE,
     },
 )
@@ -347,7 +350,7 @@ def create_quiz_book(
     except QuizAssigneeNotProjectMemberError as exc:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            f"지정한 사용자 중 이 프로젝트의 멤버가 아닌 사용자가 있습니다: {exc.user_ids}",
+            f"지정한 사용자 중 응시자로 지정할 수 없는 사용자가 있습니다: {exc.user_ids}",
         ) from None
     _notify_quiz_assigned(notifications, outcome.book, outcome.notify_user_ids)
     return outcome.book
@@ -378,7 +381,10 @@ def get_quiz_book(
         404: {"description": "문제집 없음"},
         403: {"description": "이 문제집을 만든 사람 또는 프로젝트 소유자가 아님"},
         409: {"description": "응시 이력이 있어 수정할 수 없음 — /duplicate 로 복제할 것"},
-        400: {"description": "assignee_user_ids 중 이 프로젝트의 활성 멤버가 아닌 사용자가 있음"},
+        400: {
+            "description": "assignee_user_ids 중 지정할 수 없는 사용자가 있음"
+            "(비공개/초대 프로젝트: 활성 멤버가 아님, 공개 프로젝트: 존재하는 활성 사용자가 아님)"
+        },
     },
 )
 def update_quiz_book(
@@ -395,7 +401,7 @@ def update_quiz_book(
     except QuizAssigneeNotProjectMemberError as exc:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            f"지정한 사용자 중 이 프로젝트의 멤버가 아닌 사용자가 있습니다: {exc.user_ids}",
+            f"지정한 사용자 중 응시자로 지정할 수 없는 사용자가 있습니다: {exc.user_ids}",
         ) from None
     _notify_quiz_assigned(notifications, outcome.book, outcome.notify_user_ids)
     return outcome.book

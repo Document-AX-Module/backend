@@ -28,7 +28,7 @@ def send_due_reminders(db: Session, settings: Settings) -> int:
             type=NotificationType.QUIZ_DUE_SOON,
             title=f"'{book.title}' 응시 마감이 얼마 남지 않았습니다",
             body=f"마감: {book.due_at:%Y-%m-%d %H:%M}",
-            url=f"/projects/{book.project_id}/quizzes/{book.id}",
+            url=f"/quiz/{book.id}/take",
             meta={
                 "quiz_book_id": book.id,
                 "project_id": book.project_id,

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.core.database import get_db
+from app.models.project import VISIBILITY_PUBLIC
 from app.models.quiz_answer import QuizAnswer
 from app.models.quiz_book import QuizBook
 from app.models.quiz_question import (
@@ -26,9 +27,11 @@ from app.models.quiz_session import SESSION_STATUS_SUBMITTED, QuizSession
 from app.models.user import User
 from app.repositories.embedding_repository import EmbeddingModelRepository
 from app.repositories.project_member_repository import ProjectMemberRepository
+from app.repositories.project_repository import ProjectRepository
 from app.repositories.quiz_book_repository import QuizBookRepository
 from app.repositories.quiz_question_repository import QuizQuestionRepository
 from app.repositories.quiz_session_repository import QuizSessionRepository
+from app.repositories.user_repository import UserRepository
 from app.schemas.quiz import (
     QuizAnswerGradeResult,
     QuizAnswerRecord,
@@ -91,7 +94,8 @@ class QuizBookForbiddenError(Exception):
 
 
 class QuizAssigneeNotProjectMemberError(Exception):
-    """지정하려는 사용자 중 이 프로젝트의 활성 멤버가 아닌 사람이 있을 때"""
+    """지정하려는 사용자 중 지정할 수 없는 사람이 있을 때(비공개/초대 프로젝트: 활성 멤버가 아님,
+    공개 프로젝트: 존재하는 활성 사용자가 아님)"""
 
     def __init__(self, user_ids: list[int]) -> None:
         self.user_ids = user_ids
@@ -158,6 +162,8 @@ class QuizService:
         activity: ActivityService,
         embedding_models: EmbeddingModelRepository,
         project_members: ProjectMemberRepository,
+        projects: ProjectRepository,
+        users: UserRepository,
         settings: Settings,
         llm: LLMProvider,
     ) -> None:
@@ -167,6 +173,8 @@ class QuizService:
         self.activity = activity
         self.embedding_models = embedding_models
         self.project_members = project_members
+        self.projects = projects
+        self.users = users
         self.settings = settings
         self.llm = llm
 
@@ -277,11 +285,18 @@ class QuizService:
         )
 
     def _validate_assignees(self, project_id: int, user_ids: list[int]) -> None:
-        invalid = [
-            uid
-            for uid in user_ids
-            if self.project_members.get_active(project_id, uid) is None
-        ]
+        if not user_ids:
+            return
+        project = self.projects.get(project_id)
+        if project is not None and project.visibility == VISIBILITY_PUBLIC:
+            valid_ids = self.users.list_active_ids(set(user_ids))
+            invalid = [uid for uid in user_ids if uid not in valid_ids]
+        else:
+            invalid = [
+                uid
+                for uid in user_ids
+                if self.project_members.get_active(project_id, uid) is None
+            ]
         if invalid:
             raise QuizAssigneeNotProjectMemberError(invalid)
 
@@ -704,6 +719,8 @@ def get_quiz_service(
         activity,
         EmbeddingModelRepository(db),
         ProjectMemberRepository(db),
+        ProjectRepository(db),
+        UserRepository(db),
         settings,
         get_llm_provider(settings),
     )
