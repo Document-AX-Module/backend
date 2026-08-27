@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 
 from sqlalchemy.orm import Session
@@ -105,8 +106,12 @@ def usage_summary_from_api(settings: Settings, start: datetime, end: datetime) -
     """[start, end) 구간을 OpenAI Admin API 실제 값(Usage API의 토큰/호출 수 + Costs API의 실제 청구액)으로 집계"""
     end_exclusive = end.date() + timedelta(days=1)
     try:
-        usage_rows = fetch_daily_usage(settings, start=start.date(), end=end_exclusive)
-        cost_rows = fetch_daily_costs_usd(settings, start=start.date(), end=end_exclusive)
+        # 서로 독립적인 두 API 호출이라 병렬로 쏜다
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            usage_future = pool.submit(fetch_daily_usage, settings, start=start.date(), end=end_exclusive)
+            cost_future = pool.submit(fetch_daily_costs_usd, settings, start=start.date(), end=end_exclusive)
+            usage_rows = usage_future.result()
+            cost_rows = cost_future.result()
     except OpenAICostsUnavailable:
         return None
 
